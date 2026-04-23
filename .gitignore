@@ -1,0 +1,11 @@
+.DS_Store
+.build/
+.swiftpm/
+xcuserdata/
+DerivedData/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+.claude/
+# Xcode project files are committed, but user-specific state isn't.
+Config.xcconfig
+!Config.xcconfig.example

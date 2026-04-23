@@ -1,0 +1,13 @@
+// Copy to Config.xcconfig and fill in the values from Supabase
+// Dashboard → Settings → API → "Project API keys" → anon public /
+// publishable key.
+//
+// Config.xcconfig is gitignored. The values are exposed to the app
+// via Info.plist (see README.md § Xcode setup).
+//
+// The publishable key is browser-safe by design — RLS enforces what
+// any caller holding it can read. Don't put the service_role / sb_secret_
+// key in here: it would ship in the iOS binary and bypass RLS.
+
+SUPABASE_URL  = https://ydpfgiodmrhaiyiksptp.supabase.co
+SUPABASE_ANON_KEY = sb_publishable_YOUR_KEY_HERE

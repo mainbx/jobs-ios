@@ -1,0 +1,180 @@
+# jobs-ios
+
+iOS app for the job aggregator. Reads from the same Supabase project
+that the `jobwatcher` backend writes to. Shares no code with
+[`jobs-web`](../jobs-web/) — SwiftUI and Next.js don't mix — but both
+read from identical RLS-scoped tables.
+
+## Architecture
+
+```
+jobwatcher (Mac mini)        Supabase                       jobs-ios
+─────────────────────        ──────────                     ────────
+scrape + SQLite ──push──► public.jobs (RLS) ──anon key──► SwiftUI app
+                           public.scrape_runs_latest        (iOS 17+)
+```
+
+See [`../jobwatcher/docs/SUPABASE.md`](../jobwatcher/docs/SUPABASE.md)
+for the mirror contract.
+
+## Stack
+
+| | |
+|---|---|
+| Language | Swift 5.10+ |
+| UI | SwiftUI (native) |
+| State | `@Observable` (iOS 17+) |
+| Data | [`supabase-swift`](https://github.com/supabase/supabase-swift) via SPM |
+| Min target | **iOS 17** |
+| IDE | Xcode 15+ |
+
+No CocoaPods. No CLI tool installs — dependencies come via Swift
+Package Manager inside Xcode.
+
+## First-time Xcode setup
+
+The `.xcodeproj` isn't checked in yet. Create it once:
+
+1. **Open Xcode → File → New → Project → iOS → App.**
+   - Product Name: `jobs-ios`
+   - Interface: `SwiftUI`
+   - Language: `Swift`
+   - Storage: `None`
+   - Minimum Deployments: `iOS 17.0`
+   - Save to `~/Development/Projects/jobs-ios/` (same folder as this README).
+   - Xcode will create `jobs-ios/jobs-ios.xcodeproj` and a `jobs-ios/`
+     group with a default `ContentView.swift` and `jobs_iosApp.swift`.
+
+2. **Replace the default SwiftUI files** with the ones in
+   [`Sources/`](Sources/):
+   - Delete `ContentView.swift` and `jobs_iosApp.swift`.
+   - In Xcode's project navigator, right-click the group → "Add Files
+     to 'jobs-ios'…" → select everything in `Sources/` → make sure
+     "Copy items if needed" is **unchecked** (they should stay in
+     `Sources/`) and the app target is checked.
+
+3. **Add the Supabase Swift SDK.**
+   - File → Add Package Dependencies…
+   - Paste: `https://github.com/supabase/supabase-swift`
+   - Version: "Up to Next Major" from `2.0.0`.
+   - Choose the `Supabase` product and add it to the `jobs-ios` target.
+
+4. **Configure credentials via `Config.xcconfig`.**
+   - Copy `Config.xcconfig.example` → `Config.xcconfig` and fill in the
+     publishable key from Supabase Dashboard → Settings → API.
+   - In Xcode, select the project in the navigator → Project →
+     Info → Configurations. Set both Debug and Release to use
+     `Config.xcconfig` for the `jobs-ios` target.
+   - In the target's Info tab, add two custom iOS Target Properties
+     (these become `Info.plist` entries at build time):
+     ```
+     SUPABASE_URL       — String — $(SUPABASE_URL)
+     SUPABASE_ANON_KEY  — String — $(SUPABASE_ANON_KEY)
+     ```
+
+5. **Run.** Select an iPhone simulator (iPhone 15 is fine) and hit
+   ⌘R. You should see a list of the 50 most-recently-seen relevant
+   jobs from Supabase, pulled via RLS-scoped anon access.
+
+## Source layout
+
+```
+Sources/
+├── JobsApp.swift           # SwiftUI @main entry point
+├── FeedView.swift          # Scrollable list + search + chip row + date menu
+├── FeedViewModel.swift     # @Observable model, async load + filter state
+├── Filters.swift           # Keyword catalog + DateRange enum + FilterState
+├── Job.swift               # Codable row type mirroring public.jobs
+└── SupabaseClient.swift    # Singleton SupabaseClient wired from Info.plist
+Package.swift               # Typecheck-only SPM manifest (see below)
+```
+
+Schema types live in `Job.swift`. Keep them in sync with
+[`../jobwatcher/sql/supabase_schema.sql`](../jobwatcher/sql/supabase_schema.sql).
+The keyword catalog in `Filters.swift` mirrors
+[`../jobs-web/src/lib/filters.ts`](../jobs-web/src/lib/filters.ts) —
+keep the two lists in sync by hand.
+
+### `Package.swift` is for type-checking only
+
+The `Package.swift` at the repo root exists so you can run
+`swift build` to catch type errors without opening Xcode. It declares
+the sources as a **library** target (not an app) and excludes
+`JobsApp.swift` because `@main struct App` only compiles inside a
+real iOS app target.
+
+```bash
+# Quick type-check pass (no simulator required):
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build
+```
+
+The real iOS build still happens inside the `.xcodeproj` you create in
+Xcode. Don't delete `Package.swift` — it's useful in CI too.
+
+## Scope: US / US-remote only
+
+The feed only surfaces postings where `us_or_remote_eligible = true`.
+Classifier rule: "keep any posting whose location fragments resolve
+to a US address, or is remote-worldwide." The Supabase mirror is
+US-only by construction — `supabase_sync.py` never uploads non-US
+rows; the iOS query also includes `.eq("us_or_remote_eligible",
+value: true)` as a belt-and-braces guard.
+
+## Filter UI
+
+Four filters are surfaced at the top of the feed, plus a numbered
+paginator at the bottom:
+
+- **Search** (native SwiftUI `.searchable`) — matches title OR company
+  (ILIKE substring), debounced 250 ms so typing doesn't hammer Supabase.
+- **Keyword chips** — horizontal scrollable row of pre-defined labels
+  (Software, Backend, Robotics, Fall 2026, …). Tap to toggle. Multiple
+  selected chips combine with OR logic on the title.
+- **Posted-date menu** — Any time (default) / 24h / 7d / 30d. Only
+  affects rows with a non-empty `posted_at`.
+- **Remote menu** — All roles (default) / Remote only. Maps to the
+  `is_remote` column. The feed is already US-scoped, so "Remote
+  only" = US-workable remote.
+- **Tier menu** — All tiers (default) / FAANG+ / Tier 1 / Tier 2 /
+  Tier 3. Maps to the `tier` column, populated at Supabase-sync
+  time from [`../../jobwatcher/src/jobwatcher/tiers.py`](../../jobwatcher/src/jobwatcher/tiers.py).
+  Every configured company is classified (10 FAANG+ / 53 Tier 1 /
+  138 Tier 2 / 191 Tier 3 as of 2026-04-22).
+- **Numbered paginator** (bottom of list) — renders `‹ Prev  1 … 5 6
+  [7] 8 9 … 20  Next ›` with always-visible first/last, current
+  highlighted, ±2 neighbors, ellipses for gaps. Status line above
+  shows "Showing 101–200 of 5,432 · Page 2 of 55". Total counts come
+  from Supabase's `count: .exact` (read from the `Content-Range`
+  response header). Tapping any number jumps directly to that page.
+
+State lives in `FilterState` inside `FeedView`; current page lives in
+`FeedViewModel` (not a URL-backed state since iOS has no URL). The
+VM's `load(filters:)` debounces + cancels in-flight requests so rapid
+toggles don't race. Changing any filter resets pagination to page 1.
+
+## What's intentionally NOT built yet (phase 2)
+
+- Supabase Auth (Sign in with Apple + magic link) — needed before the tracker.
+- Compatibility score + "why this role" summary per job.
+- Per-user "applied / saved / rejected" tracker (new `job_status` table).
+- Company detail screen.
+- Offline cache via SwiftData.
+
+v1 = public read-only feed of relevant open roles.
+
+## Troubleshooting
+
+**`fatalError: SUPABASE_URL / SUPABASE_ANON_KEY missing`**
+Config.xcconfig isn't being picked up by the build. Check:
+- Project → Configurations → both Debug/Release → `Config.xcconfig`.
+- Target → Info → Custom iOS Target Properties contains both keys
+  bound to `$(SUPABASE_URL)` / `$(SUPABASE_ANON_KEY)`.
+
+**App launches but shows "Couldn't load jobs"**
+Either the RLS policy `jobs_public_read` is missing (check Supabase
+SQL editor, see `../jobwatcher/sql/supabase_schema.sql`), or the
+publishable key is wrong (regenerate from Dashboard → Settings → API).
+
+**App Transport Security error**
+Supabase URLs are HTTPS-only — ATS is not the issue. Check that
+`SUPABASE_URL` starts with `https://` and the project ref is right.
