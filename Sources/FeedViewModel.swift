@@ -118,20 +118,15 @@ final class FeedViewModel {
                 query = query.or(clause)
             }
 
-            // Date range: compound filter so we honor the user's
-            // "posted within" intent while not silently hiding the
-            // ~30% of rows with no `posted_at`.
-            //
-            //   (posted_at known AND posted_at >= floor)
-            //   OR
-            //   (posted_at empty AND first_seen >= floor)
-            //
-            // Mirrors the web's logic in jobs-web/src/app/page.tsx.
+            // Date range: filter on the precomputed
+            // `effective_posted_at` column (populated by
+            // `supabase_sync` as `posted_at` parsed to TIMESTAMPTZ
+            // when known, else `first_seen`). Single indexed range
+            // scan — dodges the 3s anon statement timeout we hit
+            // with the compound OR across posted_at (TEXT) and
+            // first_seen (TIMESTAMPTZ). Mirrors the web.
             if let floors = filters.posted.floors {
-                query = query.or(
-                    "and(posted_at.neq.,posted_at.gte.\(floors.postedText))," +
-                    "and(posted_at.eq.,first_seen.gte.\(floors.iso))"
-                )
+                query = query.gte("effective_posted_at", value: floors.iso)
             }
 
             // Remote filter — two-state. `.all` leaves it off.
@@ -147,9 +142,22 @@ final class FeedViewModel {
                 query = query.eq("tier", value: tierValue)
             }
 
+            // Sort: `effective_posted_at DESC`, covered by
+            // `idx_jobs_effective_posted_at`. This column is
+            // populated by `supabase_sync._effective_posted_at` as
+            // `posted_at` parsed to TIMESTAMPTZ when the board
+            // exposes one, else `first_seen`. A just-discovered job
+            // (no posted_at) whose first_seen is 5 min ago beats a
+            // board-posted job from 1 day ago; among board-dated
+            // jobs, the most recent posting wins. Single-column sort
+            // on a single index — and mirrors the web feed exactly
+            // so users switching between apps see the same top of
+            // feed. Previously compound (`posted_at DESC, last_seen
+            // DESC`), which drifted from the web and fell back to
+            // processing order once the daily cron stamped every
+            // active job with today's last_seen.
             let response = try await query
-                .order("posted_at", ascending: false)
-                .order("last_seen", ascending: false)
+                .order("effective_posted_at", ascending: false)
                 .range(from: from, to: to)
                 .execute()
 

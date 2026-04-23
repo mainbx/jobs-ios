@@ -20,6 +20,7 @@ struct FeedView: View {
     @State private var filters = FilterState()
     @State private var searchText: String = ""
     @State private var searchTask: Task<Void, Never>?
+    @State private var showKeywords: Bool = false
 
     var body: some View {
         NavigationStack {
@@ -64,12 +65,17 @@ struct FeedView: View {
 
     private var filterStack: some View {
         VStack(alignment: .leading, spacing: 8) {
-            KeywordChipRow(selected: $filters.keywords)
+            // Filter bar with a Keywords toggle at the end — chip row
+            // is collapsed by default (mirrors the web UX).
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 16) {
                     DateRangeMenu(selection: $filters.posted)
                     RemoteFilterMenu(selection: $filters.remote)
                     TierFilterMenu(selection: $filters.tier)
+                    KeywordToggleButton(
+                        count: filters.keywords.count,
+                        isOpen: $showKeywords
+                    )
                     if !filters.isEmpty {
                         Button("Clear") {
                             filters = FilterState()
@@ -80,9 +86,18 @@ struct FeedView: View {
                 }
                 .padding(.horizontal)
             }
+
+            if showKeywords {
+                KeywordChipRow(selected: $filters.keywords)
+            }
         }
         .padding(.vertical, 8)
         .background(.regularMaterial)
+        .onAppear {
+            // Deep-link / restored state: if any chip is already set,
+            // default-open so the user sees what's active.
+            if !filters.keywords.isEmpty { showKeywords = true }
+        }
     }
 
     // MARK: - Results list
@@ -251,6 +266,40 @@ private struct RemoteFilterMenu: View {
                 Image(systemName: selection == .remote ? "house" : "globe.americas")
                 Text(selection.label)
                     .font(.footnote)
+            }
+            .foregroundStyle(.secondary)
+        }
+    }
+}
+
+// MARK: - Keyword toggle button
+
+/// Compact toggle that expands / collapses the keyword chip row.
+/// Shows a badge with the active-count so a collapsed keyword filter
+/// is still discoverable at a glance.
+private struct KeywordToggleButton: View {
+    let count: Int
+    @Binding var isOpen: Bool
+
+    var body: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) { isOpen.toggle() }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "tag")
+                Text("Keywords")
+                    .font(.footnote)
+                if count > 0 {
+                    Text("\(count)")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.accentColor))
+                        .foregroundStyle(Color.white)
+                }
+                Image(systemName: isOpen ? "chevron.up" : "chevron.down")
+                    .font(.caption2)
             }
             .foregroundStyle(.secondary)
         }
