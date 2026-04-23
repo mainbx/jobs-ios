@@ -5,8 +5,9 @@
 //  Fetches a page of the most-recently-seen relevant jobs from
 //  Supabase, optionally narrowed by a `FilterState` (search + keyword
 //  chips + posted-at window + remote filter). The RLS policy
-//  `jobs_public_read` already scopes to `relevant = true`, so that
-//  filter is never sent from the app.
+//  `jobs_public_read` already scopes to the public feed slice
+//  (`us_or_remote_eligible = true AND relevant = true`). The app still
+//  sends the US/remote filter as a belt-and-braces guard.
 //
 //  Pagination is numbered — each load replaces the list and jumps to
 //  the requested page. Total-row count comes from PostgREST's
@@ -125,8 +126,8 @@ final class FeedViewModel {
             // scan — dodges the 3s anon statement timeout we hit
             // with the compound OR across posted_at (TEXT) and
             // first_seen (TIMESTAMPTZ). Mirrors the web.
-            if let floors = filters.posted.floors {
-                query = query.gte("effective_posted_at", value: floors.iso)
+            if let floorISO = filters.posted.floorISO {
+                query = query.gte("effective_posted_at", value: floorISO)
             }
 
             // Remote filter — two-state. `.all` leaves it off.

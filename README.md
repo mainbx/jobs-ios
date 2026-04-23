@@ -116,9 +116,11 @@ Xcode. Don't delete `Package.swift` — it's useful in CI too.
 The feed only surfaces postings where `us_or_remote_eligible = true`.
 Classifier rule: "keep any posting whose location fragments resolve
 to a US address, or is remote-worldwide." The Supabase mirror is
-US-only by construction — `supabase_sync.py` never uploads non-US
-rows; the iOS query also includes `.eq("us_or_remote_eligible",
-value: true)` as a belt-and-braces guard.
+US/remote-eligible and relevant-only by construction —
+`supabase_sync.py` uploads only
+`active=1 AND us_or_remote_eligible=1 AND relevant=1` rows; the iOS
+query also includes `.eq("us_or_remote_eligible", value: true)` as a
+belt-and-braces guard.
 
 ## Filter UI
 
@@ -130,8 +132,9 @@ paginator at the bottom:
 - **Keyword chips** — horizontal scrollable row of pre-defined labels
   (Software, Backend, Robotics, Fall 2026, …). Tap to toggle. Multiple
   selected chips combine with OR logic on the title.
-- **Posted-date menu** — Any time (default) / 24h / 7d / 30d. Only
-  affects rows with a non-empty `posted_at`.
+- **Posted-date menu** — Any time (default) / 24h / 7d / 30d. Filters
+  on `effective_posted_at`, populated by `jobwatcher` as board
+  `posted_at` when available, else `first_seen`.
 - **Remote menu** — All roles (default) / Remote only. Maps to the
   `is_remote` column. The feed is already US-scoped, so "Remote
   only" = US-workable remote.
@@ -139,7 +142,7 @@ paginator at the bottom:
   Tier 3. Maps to the `tier` column, populated at Supabase-sync
   time from [`../../jobwatcher/src/jobwatcher/tiers.py`](../../jobwatcher/src/jobwatcher/tiers.py).
   Every configured company is classified (10 FAANG+ / 53 Tier 1 /
-  138 Tier 2 / 191 Tier 3 as of 2026-04-22).
+  155 Tier 2 / 204 Tier 3 / 11 Startups as of 2026-04-23).
 - **Numbered paginator** (bottom of list) — renders `‹ Prev  1 … 5 6
   [7] 8 9 … 20  Next ›` with always-visible first/last, current
   highlighted, ±2 neighbors, ellipses for gaps. Status line above

@@ -9,11 +9,11 @@
 //    - Free-text `search` matches title OR company (ILIKE substring).
 //    - Keyword chips are title-only substring match, OR'd across
 //      selections.
-//    - `DateRange` applies to `posted_at` (rows with an empty
-//      posted_at are dropped when a window is active).
+//    - `DateRange` applies to `effective_posted_at`: backend-normalized
+//      board `posted_at` when known, else `first_seen`.
 //    - `RemoteFilter` maps to the `is_remote` column. "All" leaves the
-//      filter off. "Remote only" keeps is_remote=true, "Onsite only"
-//      keeps is_remote=false. Feed is already US-scoped by Supabase.
+//      filter off. "Remote only" keeps is_remote=true. Feed is already
+//      US-scoped by Supabase.
 //
 
 import Foundation
@@ -253,19 +253,15 @@ enum DateRange: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Lower-bound timestamps for the compound date filter.
+    /// Lower-bound timestamp for the date filter.
     ///
-    /// Returns two strings because the filter runs on two columns:
-    ///   - `posted_at` (TEXT) — needs byte-level format match with
-    ///     the backend's `normalize_posted_at` output, which is
-    ///     `YYYY-MM-DDTHH:MM:SS+00:00` (no millis, `+00:00` suffix).
-    ///     PostgREST's `gte` is a lexicographic compare so exact
-    ///     format alignment matters.
-    ///   - `first_seen` (TIMESTAMPTZ) — native timestamp compare,
-    ///     any valid ISO works.
+    /// The query compares this against `effective_posted_at`, a backend
+    /// TIMESTAMPTZ populated from board `posted_at` when known, else
+    /// `first_seen`. A single indexed timestamp avoids the old slow
+    /// compound query across `posted_at` TEXT and `first_seen`.
     ///
     /// `nil` means "Any time" — no floor, feed returns everything.
-    var floors: (postedText: String, iso: String)? {
+    var floorISO: String? {
         let days: Int
         switch self {
         case .any: return nil
@@ -277,15 +273,7 @@ enum DateRange: String, CaseIterable, Identifiable {
 
         let full = ISO8601DateFormatter()
         full.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let iso = full.string(from: floor)
-
-        let compact = ISO8601DateFormatter()
-        compact.formatOptions = [.withInternetDateTime]
-        // `.withInternetDateTime` produces "...Z"; rewrite to "+00:00"
-        // to match the backend's stored format exactly.
-        let postedText = compact.string(from: floor).replacingOccurrences(of: "Z", with: "+00:00")
-
-        return (postedText: postedText, iso: iso)
+        return full.string(from: floor)
     }
 }
 
