@@ -1,0 +1,30 @@
+name: CI
+
+# Runs on every push to main and every PR targeting main.
+# Branch protection on main requires this workflow to pass before merge.
+#
+# Note: this builds the SwiftPM library target (`swift build`), which
+# typechecks every source file under `Sources/` except `JobsApp.swift`
+# (excluded in Package.swift because `@main` requires an app target).
+# The real iOS app build lives in the `.xcodeproj` generated in Xcode
+# and isn't exercised here. That's a known gap — adding it means
+# committing an .xcodeproj, which we haven't done yet.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Build (library target via SwiftPM)
+        run: swift build
