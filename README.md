@@ -31,50 +31,30 @@ for the mirror contract.
 No CocoaPods. No CLI tool installs — dependencies come via Swift
 Package Manager inside Xcode.
 
-## First-time Xcode setup
+## First-time setup
 
-The `.xcodeproj` isn't checked in yet. Create it once:
+The `.xcodeproj`, `Info.plist`, and sources are all checked in. After
+cloning you only need to plug in your own Supabase publishable key:
 
-1. **Open Xcode → File → New → Project → iOS → App.**
-   - Product Name: `jobs-ios`
-   - Interface: `SwiftUI`
-   - Language: `Swift`
-   - Storage: `None`
-   - Minimum Deployments: `iOS 17.0`
-   - Save to `~/Development/Projects/jobs-ios/` (same folder as this README).
-   - Xcode will create `jobs-ios/jobs-ios.xcodeproj` and a `jobs-ios/`
-     group with a default `ContentView.swift` and `jobs_iosApp.swift`.
+1. **Open `jobs-ios.xcodeproj` in Xcode 15+.** Xcode resolves the
+   `supabase-swift` SPM dependency automatically on first open.
 
-2. **Replace the default SwiftUI files** with the ones in
-   [`Sources/`](Sources/):
-   - Delete `ContentView.swift` and `jobs_iosApp.swift`.
-   - In Xcode's project navigator, right-click the group → "Add Files
-     to 'jobs-ios'…" → select everything in `Sources/` → make sure
-     "Copy items if needed" is **unchecked** (they should stay in
-     `Sources/`) and the app target is checked.
-
-3. **Add the Supabase Swift SDK.**
-   - File → Add Package Dependencies…
-   - Paste: `https://github.com/supabase/supabase-swift`
-   - Version: "Up to Next Major" from `2.0.0`.
-   - Choose the `Supabase` product and add it to the `jobs-ios` target.
-
-4. **Configure credentials via `Config.xcconfig`.**
+2. **Configure credentials via `Config.xcconfig`.**
    - Copy `Config.xcconfig.example` → `Config.xcconfig` and fill in the
      publishable key from Supabase Dashboard → Settings → API.
-   - In Xcode, select the project in the navigator → Project →
-     Info → Configurations. Set both Debug and Release to use
-     `Config.xcconfig` for the `jobs-ios` target.
-   - In the target's Info tab, add two custom iOS Target Properties
-     (these become `Info.plist` entries at build time):
-     ```
-     SUPABASE_URL       — String — $(SUPABASE_URL)
-     SUPABASE_ANON_KEY  — String — $(SUPABASE_ANON_KEY)
-     ```
+   - Keep the URL spelling as `https:/$()/...` in `Config.xcconfig`;
+     Xcode expands it to `https://...`. A literal `https://` is parsed
+     as an `.xcconfig` comment and truncates the value.
+   - `Config.xcconfig` is `.gitignore`d — only the `.example` is tracked.
 
-5. **Run.** Select an iPhone simulator (iPhone 15 is fine) and hit
+3. **Run.** Select an iPhone simulator (iPhone 15 is fine) and hit
    ⌘R. You should see a list of the 50 most-recently-seen relevant
    jobs from Supabase, pulled via RLS-scoped anon access.
+
+The project wiring — `Config.xcconfig` bound to both Debug/Release,
+`Info.plist` mapping `SUPABASE_URL` / `SUPABASE_ANON_KEY` from build
+settings, and the `Supabase` SPM product linked to the target — is
+already in the checked-in `jobs-ios.xcodeproj/project.pbxproj`.
 
 ## Source layout
 
@@ -86,6 +66,7 @@ Sources/
 ├── Filters.swift           # Keyword catalog + DateRange enum + FilterState
 ├── Job.swift               # Codable row type mirroring public.jobs
 └── SupabaseClient.swift    # Singleton SupabaseClient wired from Info.plist
+Info.plist                  # App metadata + Supabase build-setting bridge
 Package.swift               # Typecheck-only SPM manifest (see below)
 ```
 
@@ -170,8 +151,11 @@ v1 = public read-only feed of relevant open roles.
 **`fatalError: SUPABASE_URL / SUPABASE_ANON_KEY missing`**
 Config.xcconfig isn't being picked up by the build. Check:
 - Project → Configurations → both Debug/Release → `Config.xcconfig`.
-- Target → Info → Custom iOS Target Properties contains both keys
-  bound to `$(SUPABASE_URL)` / `$(SUPABASE_ANON_KEY)`.
+- `Info.plist` contains the two keys bound to `$(SUPABASE_URL)` /
+  `$(SUPABASE_ANON_KEY)`. Both the `.xcconfig` binding and the
+  `Info.plist` entries should already be set via the checked-in
+  `jobs-ios.xcodeproj/project.pbxproj` — if they're missing, your
+  local project drifted; re-check out from `main`.
 
 **App launches but shows "Couldn't load jobs"**
 Either the RLS policy `jobs_public_read` is missing (check Supabase

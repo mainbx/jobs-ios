@@ -8,6 +8,9 @@
 // The publishable key is browser-safe by design — RLS enforces what
 // any caller holding it can read. Don't put the service_role / sb_secret_
 // key in here: it would ship in the iOS binary and bypass RLS.
+//
+// In .xcconfig files, `//` starts a comment. Keep the `https:/$()/`
+// spelling below so Xcode expands the value to `https://...`.
 
-SUPABASE_URL  = https://ydpfgiodmrhaiyiksptp.supabase.co
+SUPABASE_URL  = https:/$()/ydpfgiodmrhaiyiksptp.supabase.co
 SUPABASE_ANON_KEY = sb_publishable_YOUR_KEY_HERE

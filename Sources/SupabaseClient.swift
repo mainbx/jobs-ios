@@ -27,6 +27,12 @@ enum SupabaseAPI {
                 "Set them via Config.xcconfig — see README.md."
             )
         }
-        return SupabaseClient(supabaseURL: url, supabaseKey: key)
+        return SupabaseClient(
+            supabaseURL: url,
+            supabaseKey: key,
+            options: SupabaseClientOptions(
+                auth: SupabaseClientOptions.AuthOptions(emitLocalSessionAsInitialSession: true)
+            )
+        )
     }()
 }
