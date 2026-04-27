@@ -3,8 +3,8 @@
 //  jobs-ios
 //
 //  Fetches a page of the most-recently-seen relevant jobs from
-//  Supabase, optionally narrowed by a `FilterState` (search + keyword
-//  chips + posted-at window + remote filter). The RLS policy
+//  Supabase, optionally narrowed by a `FilterState` (multi-keyword
+//  search + posted-at window + remote + tier filter). The RLS policy
 //  `jobs_public_read` already scopes to the public feed slice
 //  (`us_or_remote_eligible = true AND relevant = true`). The app still
 //  sends the US/remote filter as a belt-and-braces guard.
@@ -102,20 +102,14 @@ final class FeedViewModel {
                 )
                 .eq("us_or_remote_eligible", value: true)
 
-            // Free-text search: title OR company (ILIKE substring).
-            let trimmed = filters.search.trimmingCharacters(in: .whitespaces)
-            if !trimmed.isEmpty {
-                let safe = trimmed.replacingOccurrences(of: "(", with: " ")
-                    .replacingOccurrences(of: ")", with: " ")
-                    .replacingOccurrences(of: ",", with: " ")
-                query = query.or("title.ilike.*\(safe)*,company.ilike.*\(safe)*")
-            }
-
-            // Keyword chips: title-only, OR across selections.
-            if !filters.keywords.isEmpty {
-                let clause = filters.keywords
-                    .map { "title.ilike.*\($0)*" }
-                    .joined(separator: ",")
+            // Multi-keyword free-text search. The user types one or
+            // more terms separated by `,` or `;`; each becomes an
+            // ILIKE substring match against title OR company; all
+            // OR'd together. Single-term inputs ("rust") behave like
+            // the old single-substring shape; comma-separated
+            // ("intern, engineer") gives the union. Mirrors the web.
+            let terms = splitSearchTerms(filters.search)
+            if let clause = searchOrClause(terms, columns: ["title", "company"]) {
                 query = query.or(clause)
             }
 

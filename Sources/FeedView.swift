@@ -3,8 +3,8 @@
 //  jobs-ios
 //
 //  Entry screen. Scrollable list of open roles, newest first, with
-//  search + keyword chips + date-range + remote filter stacked above
-//  the list. The bottom of the list shows a numbered paginator —
+//  multi-keyword search + date-range + remote + tier filters stacked
+//  above the list. The bottom of the list shows a numbered paginator —
 //  first page, last page, current ± 2, ellipses for gaps — plus Prev
 //  / Next arrows. Mirrors the web's Pagination component exactly.
 //
@@ -20,7 +20,6 @@ struct FeedView: View {
     @State private var filters = FilterState()
     @State private var searchText: String = ""
     @State private var searchTask: Task<Void, Never>?
-    @State private var showKeywords: Bool = false
 
     var body: some View {
         NavigationStack {
@@ -33,7 +32,10 @@ struct FeedView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-            .searchable(text: $searchText, prompt: "Search titles, companies")
+            .searchable(
+                text: $searchText,
+                prompt: "Search titles, companies — comma- or semicolon-separated"
+            )
             .onChange(of: searchText) { _, new in
                 // Debounce to avoid one query per keystroke.
                 searchTask?.cancel()
@@ -43,9 +45,6 @@ struct FeedView: View {
                     filters.search = new
                     await model.load(filters: filters)
                 }
-            }
-            .onChange(of: filters.keywords) { _, _ in
-                Task { await model.load(filters: filters) }
             }
             .onChange(of: filters.posted) { _, _ in
                 Task { await model.load(filters: filters) }
@@ -65,17 +64,15 @@ struct FeedView: View {
 
     private var filterStack: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Filter bar with a Keywords toggle at the end — chip row
-            // is collapsed by default (mirrors the web UX).
+            // Filter bar with date / remote / tier menus and a Clear
+            // button. Free-text search lives in the navigation
+            // ``.searchable`` slot above; multi-keyword input is
+            // entered as comma- or semicolon-separated terms there.
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 16) {
                     DateRangeMenu(selection: $filters.posted)
                     RemoteFilterMenu(selection: $filters.remote)
                     TierFilterMenu(selection: $filters.tier)
-                    KeywordToggleButton(
-                        count: filters.keywords.count,
-                        isOpen: $showKeywords
-                    )
                     if !filters.isEmpty {
                         Button("Clear") {
                             filters = FilterState()
@@ -86,18 +83,9 @@ struct FeedView: View {
                 }
                 .padding(.horizontal)
             }
-
-            if showKeywords {
-                KeywordChipRow(selected: $filters.keywords)
-            }
         }
         .padding(.vertical, 8)
         .background(.regularMaterial)
-        .onAppear {
-            // Deep-link / restored state: if any chip is already set,
-            // default-open so the user sees what's active.
-            if !filters.keywords.isEmpty { showKeywords = true }
-        }
     }
 
     // MARK: - Results list
@@ -150,65 +138,6 @@ struct FeedView: View {
             }
             .listStyle(.plain)
         }
-    }
-}
-
-// MARK: - Keyword chips row
-
-private struct KeywordChipRow: View {
-    @Binding var selected: Set<String>
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(Filters.keywords) { kw in
-                    ChipButton(
-                        label: kw.label,
-                        on: selected.contains(kw.match),
-                        onTap: {
-                            if selected.contains(kw.match) {
-                                selected.remove(kw.match)
-                            } else {
-                                selected.insert(kw.match)
-                            }
-                        }
-                    )
-                }
-            }
-            .padding(.horizontal)
-        }
-    }
-}
-
-/// Backdrop for inactive chips. `UIColor.secondarySystemBackground` is
-/// iOS-only; on other platforms we fall back to a neutral gray that
-/// works in both light and dark appearances.
-private var chipBackground: Color {
-    #if canImport(UIKit)
-    return Color(uiColor: .secondarySystemBackground)
-    #else
-    return Color.gray.opacity(0.15)
-    #endif
-}
-
-private struct ChipButton: View {
-    let label: String
-    let on: Bool
-    let onTap: () -> Void
-
-    var body: some View {
-        Button(action: onTap) {
-            Text(label)
-                .font(.caption)
-                .fontWeight(.medium)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule().fill(on ? Color.accentColor : chipBackground)
-                )
-                .foregroundStyle(on ? Color.white : Color.primary)
-        }
-        .buttonStyle(.plain)
     }
 }
 
@@ -266,40 +195,6 @@ private struct RemoteFilterMenu: View {
                 Image(systemName: selection == .remote ? "house" : "globe.americas")
                 Text(selection.label)
                     .font(.footnote)
-            }
-            .foregroundStyle(.secondary)
-        }
-    }
-}
-
-// MARK: - Keyword toggle button
-
-/// Compact toggle that expands / collapses the keyword chip row.
-/// Shows a badge with the active-count so a collapsed keyword filter
-/// is still discoverable at a glance.
-private struct KeywordToggleButton: View {
-    let count: Int
-    @Binding var isOpen: Bool
-
-    var body: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.15)) { isOpen.toggle() }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "tag")
-                Text("Keywords")
-                    .font(.footnote)
-                if count > 0 {
-                    Text("\(count)")
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(Color.accentColor))
-                        .foregroundStyle(Color.white)
-                }
-                Image(systemName: isOpen ? "chevron.up" : "chevron.down")
-                    .font(.caption2)
             }
             .foregroundStyle(.secondary)
         }
