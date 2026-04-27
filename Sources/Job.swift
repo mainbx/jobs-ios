@@ -6,7 +6,7 @@
 //  actually reads are decoded — keeps the feed payload small and forward-
 //  compatible if the backend adds new columns.
 //
-//  Source of truth for the schema: ../jobwatcher/sql/supabase_schema.sql
+//  Source of truth for the schema: backend's sql/supabase_schema.sql.
 //
 
 import Foundation

@@ -1,21 +1,21 @@
 # jobs-ios
 
-iOS app for the job aggregator. Reads from the same Supabase project
-that the `jobwatcher` backend writes to. Shares no code with
-[`jobs-web`](../jobs-web/) — SwiftUI and Next.js don't mix — but both
-read from identical RLS-scoped tables.
+iOS app for the job aggregator. Reads from a Supabase project that the
+backend pipeline writes to. Shares no code with the web frontend —
+SwiftUI and Next.js don't mix — but both read from identical
+RLS-scoped tables.
 
 ## Architecture
 
 ```
-jobwatcher (Mac mini)        Supabase                       jobs-ios
-─────────────────────        ──────────                     ────────
+backend pipeline             Supabase                       jobs-ios
+─────────────────            ──────────                     ────────
 scrape + SQLite ──push──► public.jobs (RLS) ──anon key──► SwiftUI app
                            public.scrape_runs_latest        (iOS 17+)
 ```
 
-See [`../jobwatcher/docs/SUPABASE.md`](../jobwatcher/docs/SUPABASE.md)
-for the mirror contract.
+The backend scraper + sync pipeline live in a separate private
+repository.
 
 ## Stack
 
@@ -48,7 +48,7 @@ cloning you only need to plug in your own Supabase publishable key:
    - `Config.xcconfig` is `.gitignore`d — only the `.example` is tracked.
 
 3. **Run.** Select an iPhone simulator (iPhone 15 is fine) and hit
-   ⌘R. You should see a list of the 50 most-recently-seen relevant
+   ⌘R. You should see a list of the 100 most-recently-seen relevant
    jobs from Supabase, pulled via RLS-scoped anon access.
 
 The project wiring — `Config.xcconfig` bound to both Debug/Release,
@@ -70,10 +70,9 @@ Info.plist                  # App metadata + Supabase build-setting bridge
 Package.swift               # Typecheck-only SPM manifest (see below)
 ```
 
-Schema types live in `Job.swift`. Keep them in sync with
-[`../jobwatcher/sql/supabase_schema.sql`](../jobwatcher/sql/supabase_schema.sql).
-The keyword catalog in `Filters.swift` mirrors
-[`../jobs-web/src/lib/filters.ts`](../jobs-web/src/lib/filters.ts) —
+Schema types live in `Job.swift`. Keep them in sync with the
+backend's `sql/supabase_schema.sql`. The keyword catalog in
+`Filters.swift` mirrors the web frontend's `src/lib/filters.ts` —
 keep the two lists in sync by hand.
 
 ### `Package.swift` is for type-checking only
@@ -89,19 +88,19 @@ real iOS app target.
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build
 ```
 
-The real iOS build still happens inside the `.xcodeproj` you create in
-Xcode. Don't delete `Package.swift` — it's useful in CI too.
+The real iOS build still happens through the checked-in
+`jobs-ios.xcodeproj`. Don't delete `Package.swift` — it's useful in CI
+too.
 
 ## Scope: US / US-remote only
 
 The feed only surfaces postings where `us_or_remote_eligible = true`.
 Classifier rule: "keep any posting whose location fragments resolve
 to a US address, or is remote-worldwide." The Supabase mirror is
-US/remote-eligible and relevant-only by construction —
-`supabase_sync.py` uploads only
-`active=1 AND us_or_remote_eligible=1 AND relevant=1` rows; the iOS
-query also includes `.eq("us_or_remote_eligible", value: true)` as a
-belt-and-braces guard.
+US/remote-eligible and relevant-only by construction — the backend
+uploads only `active=1 AND us_or_remote_eligible=1 AND relevant=1`
+rows; the iOS query also includes
+`.eq("us_or_remote_eligible", value: true)` as a belt-and-braces guard.
 
 ## Filter UI
 
@@ -114,16 +113,16 @@ paginator at the bottom:
   (Software, Backend, Robotics, Fall 2026, …). Tap to toggle. Multiple
   selected chips combine with OR logic on the title.
 - **Posted-date menu** — Any time (default) / 24h / 7d / 30d. Filters
-  on `effective_posted_at`, populated by `jobwatcher` as board
+  on `effective_posted_at`, populated by the backend as board
   `posted_at` when available, else `first_seen`.
 - **Remote menu** — All roles (default) / Remote only. Maps to the
   `is_remote` column. The feed is already US-scoped, so "Remote
   only" = US-workable remote.
 - **Tier menu** — All tiers (default) / FAANG+ / Tier 1 / Tier 2 /
   Tier 3. Maps to the `tier` column, populated at Supabase-sync
-  time from [`../../jobwatcher/src/jobwatcher/tiers.py`](../../jobwatcher/src/jobwatcher/tiers.py).
-  Every configured company is classified (10 FAANG+ / 53 Tier 1 /
-  155 Tier 2 / 204 Tier 3 / 11 Startups as of 2026-04-23).
+  time by the backend's tier classifier. Every configured company is
+  classified (10 FAANG+ / 53 Tier 1 / 155 Tier 2 / 204 Tier 3 / 11
+  Startups as of 2026-04-23).
 - **Numbered paginator** (bottom of list) — renders `‹ Prev  1 … 5 6
   [7] 8 9 … 20  Next ›` with always-visible first/last, current
   highlighted, ±2 neighbors, ellipses for gaps. Status line above
@@ -159,8 +158,8 @@ Config.xcconfig isn't being picked up by the build. Check:
 
 **App launches but shows "Couldn't load jobs"**
 Either the RLS policy `jobs_public_read` is missing (check Supabase
-SQL editor, see `../jobwatcher/sql/supabase_schema.sql`), or the
-publishable key is wrong (regenerate from Dashboard → Settings → API).
+SQL editor against the backend's schema), or the publishable key is
+wrong (regenerate from Dashboard → Settings → API).
 
 **App Transport Security error**
 Supabase URLs are HTTPS-only — ATS is not the issue. Check that

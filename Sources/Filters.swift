@@ -298,9 +298,9 @@ enum RemoteFilter: String, CaseIterable, Identifiable {
 
 /// Company-tier filter on the `tier` column. `.all` leaves it off
 /// (unranked rows only show up in that mode). The four labeled cases
-/// map 1:1 to values populated at Supabase-sync time by
-/// `jobwatcher.tiers.tier_for()`. Keep in sync with
-/// `../../jobs-web/src/lib/filters.ts::TIER_FILTERS`.
+/// map 1:1 to values populated at Supabase-sync time by the backend's
+/// tier classifier. Keep in sync with the web frontend's
+/// `src/lib/filters.ts::TIER_FILTERS`.
 enum TierFilter: String, CaseIterable, Identifiable {
     case all = "all"
     case faang = "faang"
