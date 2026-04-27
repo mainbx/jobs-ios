@@ -2,8 +2,7 @@
 //
 // This Package.swift exists **only** to let us type-check the Swift
 // sources outside Xcode. The real iOS app target lives in the
-// `.xcodeproj` the user creates in Xcode (see README.md § First-time
-// Xcode setup).
+// checked-in `jobs-ios.xcodeproj` (see README.md § First-time setup).
 //
 // `JobsApp.swift` is excluded because `@main struct JobsApp: App`
 // only works inside an iOS app target, not a library. The rest of
