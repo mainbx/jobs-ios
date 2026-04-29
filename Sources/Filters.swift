@@ -183,58 +183,6 @@ struct FilterState: Equatable {
     }
 }
 
-// MARK: - Landing-page diversification shuffle
-
-/// Today's UTC seed (`YYYY-MM-DD`). Stable across the day for a
-/// given user; rotates at 00:00 UTC. Mirrors `dailySeed()` in
-/// the web's `lib/shuffle.ts`.
-func dailySeed() -> String {
-    let f = DateFormatter()
-    f.dateFormat = "yyyy-MM-dd"
-    f.timeZone = TimeZone(identifier: "UTC")
-    return f.string(from: Date())
-}
-
-/// Mulberry32 PRNG state — same algorithm as the web sibling so a
-/// future cross-surface comparison stays apples-to-apples.
-private final class Mulberry32 {
-    private var state: UInt32
-
-    init(seed: UInt32) { self.state = seed }
-
-    func next() -> Double {
-        state = state &+ 0x6d2b79f5
-        var t = state
-        t = (t ^ (t >> 15)) &* (t | 1)
-        t = t ^ (t &+ ((t ^ (t >> 7)) &* (t | 61)))
-        let bits = t ^ (t >> 14)
-        return Double(bits) / Double(UInt32.max)
-    }
-}
-
-/// djb2-style string hash → 32-bit integer for seeding.
-private func hashSeed(_ seed: String) -> UInt32 {
-    var h: UInt32 = 5381
-    for byte in seed.utf8 {
-        h = (h &<< 5) &+ h &+ UInt32(byte)
-    }
-    return h
-}
-
-/// Seeded Fisher-Yates shuffle. Returns a new array; input
-/// untouched. Same input + same seed → same output.
-func seededShuffle<T>(_ items: [T], seed: String) -> [T] {
-    var out = items
-    let rng = Mulberry32(seed: hashSeed(seed))
-    var i = out.count - 1
-    while i > 0 {
-        let j = Int(rng.next() * Double(i + 1))
-        let safeJ = min(max(0, j), i)
-        out.swapAt(i, safeJ)
-        i -= 1
-    }
-    return out
-}
 
 /// Column the `field:value` operator is allowed to constrain to.
 /// Anything else falls through to `.any` so a stray `email:foo@bar.com`
