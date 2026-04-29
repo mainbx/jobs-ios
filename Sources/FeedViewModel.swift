@@ -21,6 +21,17 @@ import Supabase
 /// 100-row pages, matching the web app.
 private let pageSize = 100
 
+/// Per-company cap on the curated landing page. See the matching
+/// constant in the web's `app/page.tsx` — three is the lowest that
+/// comfortably fills page 1 (~50–80 rows after capping) without one
+/// company dominating. Tunable knob.
+private let landingPerCompanyCap = 3
+
+/// Tier values that anchor the curated landing experience. The
+/// mirror's `tier` column holds these exact strings (set at sync
+/// time by the backend's tier classifier).
+private let landingTiers = ["FAANG+", "Tier 1"]
+
 @Observable
 @MainActor
 final class FeedViewModel {
@@ -80,6 +91,21 @@ final class FeedViewModel {
         isLoading = true
         defer { isLoading = false }
         errorMessage = nil
+
+        // Curated landing short-circuit: no search, no filters,
+        // default sort, page 1. Fetches FAANG+/Tier 1 only, caps
+        // per-company, shuffles with daily seed. Mirrors the web's
+        // `getLandingFeed` ruleset.
+        let isBareLanding = filters.search.isEmpty
+            && filters.posted == .any
+            && filters.remote == .all
+            && filters.tier == .all
+            && filters.sort == .newest
+            && page == 1
+        if isBareLanding {
+            await performLandingLoad(filters: filters)
+            return
+        }
 
         let from = (page - 1) * pageSize
         let to = from + pageSize - 1 // inclusive range
@@ -192,27 +218,7 @@ final class FeedViewModel {
 
             if Task.isCancelled { return }
 
-            var decoded: [Job] = try JSONDecoder.supabase.decode([Job].self, from: response.data)
-
-            // Landing-page diversification: when there are no
-            // filters, no search, default sort, and we're on page
-            // 1, shuffle the top 100 newest with a daily-stable
-            // seed. Stops a single company posting 8 roles in one
-            // batch from monopolizing the top of feed. Pages 2+
-            // skip this branch and resume chronological — no
-            // duplicate rows across pages because we're only
-            // permuting page 1's set, not paging into the shuffled
-            // pool. Mirrors the web's `isBareLanding` check.
-            let isBareLanding = filters.search.isEmpty
-                && filters.posted == .any
-                && filters.remote == .all
-                && filters.tier == .all
-                && filters.sort == .newest
-                && page == 1
-            if isBareLanding {
-                decoded = seededShuffle(decoded, seed: dailySeed())
-            }
-
+            let decoded: [Job] = try JSONDecoder.supabase.decode([Job].self, from: response.data)
             let count = response.count ?? decoded.count
             let pages = max(count == 0 ? 0 : 1, (count + pageSize - 1) / pageSize)
 
@@ -225,6 +231,82 @@ final class FeedViewModel {
             if Task.isCancelled { return }
             self.errorMessage = error.localizedDescription
             print("[feed] error:", error)
+        }
+    }
+
+    /// Curated landing fetch — page 1 only, no filters, no search,
+    /// default sort. Three rules govern this path (mirrors the
+    /// web's `getLandingFeed`):
+    ///
+    ///   1. Tier-restricted pool: `FAANG+` and `Tier 1` only.
+    ///   2. Per-company cap: at most `landingPerCompanyCap` rows
+    ///      from any one company. Without this, a fresh batch
+    ///      from a single company (e.g. Google adding 700 rows
+    ///      in one scrape) takes the entire pool.
+    ///   3. Daily-seeded shuffle: order stable across the day,
+    ///      rotates each new UTC midnight.
+    ///
+    /// Total count returned is the **full** feed so the paginator
+    /// gives users a way to browse beyond the curated landing.
+    private func performLandingLoad(filters: FilterState) async {
+        do {
+            // Pool fetch — up to 1000 newest FAANG+/Tier 1 rows.
+            // The trigram index on `effective_posted_at` covers
+            // the scan; `count: .exact` would slow this down
+            // without value (we get the full-feed count below).
+            let poolResp = try await SupabaseAPI.client
+                .from("jobs")
+                .select(
+                    "canonical_key, company, title, posting_url, " +
+                    "location, us_or_remote_eligible, is_remote, " +
+                    "last_seen, posted_at"
+                )
+                .eq("us_or_remote_eligible", value: true)
+                .in("tier", values: landingTiers)
+                .order("effective_posted_at", ascending: false)
+                .limit(1000)
+                .execute()
+
+            if Task.isCancelled { return }
+
+            let pool = try JSONDecoder.supabase.decode([Job].self, from: poolResp.data)
+
+            // Per-company cap — iterate newest-first so the rows
+            // we surface from each company are also that company's
+            // freshest.
+            var byCompany: [String: [Job]] = [:]
+            for j in pool {
+                let list = byCompany[j.company] ?? []
+                if list.count >= landingPerCompanyCap { continue }
+                byCompany[j.company] = list + [j]
+            }
+            let capped = Array(byCompany.values).flatMap { $0 }
+            let shuffled = Array(seededShuffle(capped, seed: dailySeed()).prefix(pageSize))
+
+            // Full-feed count for the paginator — clicking Next
+            // takes the user into the standard newest-first feed
+            // across all tiers, so the count must reflect that
+            // broader set, not the curated subset.
+            let countResp = try await SupabaseAPI.client
+                .from("jobs")
+                .select("canonical_key", head: true, count: .estimated)
+                .eq("us_or_remote_eligible", value: true)
+                .execute()
+
+            if Task.isCancelled { return }
+
+            let totalCount = countResp.count ?? shuffled.count
+            let pages = max(totalCount == 0 ? 0 : 1, (totalCount + pageSize - 1) / pageSize)
+
+            self.jobs = shuffled
+            self.totalCount = totalCount
+            self.totalPages = pages
+            self.currentPage = 1
+            self.lastFilters = filters
+        } catch {
+            if Task.isCancelled { return }
+            self.errorMessage = error.localizedDescription
+            print("[landing] error:", error)
         }
     }
 }
