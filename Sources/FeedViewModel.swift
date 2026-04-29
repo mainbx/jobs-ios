@@ -102,14 +102,22 @@ final class FeedViewModel {
                 )
                 .eq("us_or_remote_eligible", value: true)
 
-            // Multi-keyword free-text search. The user types one or
-            // more terms separated by `,` or `;`; each becomes an
-            // ILIKE substring match against title OR company; all
-            // OR'd together. Single-term inputs ("rust") behave like
-            // the old single-substring shape; comma-separated
-            // ("intern, engineer") gives the union. Mirrors the web.
+            // Free-text search — Google-style AND-of-keywords. The
+            // user types any number of words (separated by whitespace,
+            // `,`, or `;`); every term must hit at least one of
+            // (title, company). Quoted phrases (`"staff software
+            // engineer"`) stay as a single term.
+            //
+            // Wire shape: `searchTermClauses` returns one OR clause
+            // per term; chaining `.or(clause)` once per clause emits
+            // one `or=…` query parameter per term. supabase-swift +
+            // PostgREST joins repeated `or=` params with AND for
+            // free, giving us
+            // `(t1 in title|company) AND (t2 in title|company) AND …`.
+            // Trigram indexes cover every ILIKE; the planner picks
+            // the most selective term first. Mirrors the web.
             let terms = splitSearchTerms(filters.search)
-            if let clause = searchOrClause(terms, columns: ["title", "company"]) {
+            for clause in searchTermClauses(terms, columns: ["title", "company"]) {
                 query = query.or(clause)
             }
 

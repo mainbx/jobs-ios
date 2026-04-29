@@ -6,11 +6,14 @@
 //  `lib/filters.ts` — keep semantics in sync by hand.
 //
 //  Filter semantics:
-//    - Free-text `search` is **multi-keyword**. The user types one or
-//      more terms separated by `,` or `;`; each term becomes an ILIKE
-//      substring match against title OR company; everything OR'd
-//      together. Single-term inputs ("rust") behave like before.
-//      Multi-term ("intern, engineer") gets the union.
+//    - Free-text `search` is **Google-style AND-of-keywords**. The
+//      user types any number of words (separated by whitespace,
+//      `,`, or `;`); a row matches only when *every* term is found in
+//      either the title or the company. Quoted phrases
+//      (`"staff software engineer"` / `'lululemon devops'`) stay as a
+//      single term. The previous OR semantics meant typing more
+//      words *broadened* the result set, opposite of how every other
+//      search box works.
 //    - `DateRange` applies to `effective_posted_at`: backend-normalized
 //      board `posted_at` when known, else `first_seen`.
 //    - `RemoteFilter` maps to the `is_remote` column. "All" leaves the
@@ -19,10 +22,15 @@
 //    - `TierFilter` maps to the `tier` column populated at
 //      Supabase-sync time by the backend's tier classifier.
 //
-//  The pre-defined keyword chip catalog was removed in favor of free-
-//  text multi-keyword search. The DB-side semantics are unchanged:
-//  same trigram indexes (`idx_jobs_title_trgm`, `idx_jobs_company_trgm`)
-//  cover both shapes.
+//  Wire shape per term: each term emits one PostgREST `or(...)` clause
+//  that ORs `title ILIKE *t*` against `company ILIKE *t*`. The caller
+//  chains `.or(clause)` once per term; supabase-swift + PostgREST
+//  joins repeated `or=` query parameters with AND. Trigram indexes
+//  (`idx_jobs_title_trgm`, `idx_jobs_company_trgm`, `pg_trgm`) cover
+//  every ILIKE.
+//
+//  The pre-defined keyword chip catalog was removed earlier in favor
+//  of free-text search.
 //
 
 import Foundation
@@ -142,55 +150,120 @@ struct FilterState: Equatable {
 
 /// Split a free-text search input into individual ILIKE-ready terms.
 ///
-/// - Splits on commas AND semicolons (users habitually use either).
-/// - Trims each term, drops empties, de-duplicates case-insensitively.
-/// - Strips `(`, `)`, `,` from each term — those characters break
-///   PostgREST's ``or(...)`` filter syntax. Single quotes pass through
-///   harmlessly inside the substring portion of an ``ilike`` value.
+/// Tokenizer:
+///   - Quoted phrases (`"staff software engineer"` or
+///     `'lululemon devops'`) stay as a single term. Quotes only open
+///     phrase mode at the start of a token, so mid-word apostrophes
+///     (`mcdonald's`, `o'reilly`) survive intact.
+///   - Anything else is split on whitespace, `,` and `;` — all three
+///     are treated identically. (Whitespace was *not* a separator
+///     before, which is why typing "lululemon staff software engineer"
+///     used to return zero rows: it became one giant 32-char term.)
+///   - Empty terms are dropped, case-insensitive de-dup, internal
+///     whitespace collapsed.
+///   - Characters that would break PostgREST's `or(...)` syntax —
+///     `(`, `)`, `,` — are replaced with spaces. Stray leading or
+///     trailing quotes (from unbalanced input like `staff "engineer`)
+///     are stripped.
 ///
 /// Examples:
-///   ""                       → []
-///   "rust"                   → ["rust"]
-///   "rust, go"               → ["rust", "go"]
-///   "rust ; go ; rust"       → ["rust", "go"]   // dedup
-///   "intern; 'engineer'"     → ["intern", "'engineer'"]
+///   ""                                     → []
+///   "rust"                                 → ["rust"]
+///   "lululemon staff software engineer"    → ["lululemon", "staff", "software", "engineer"]
+///   "staff software engineer; lululemon"   → ["staff", "software", "engineer", "lululemon"]
+///   "\"staff software engineer\" lululemon" → ["staff software engineer", "lululemon"]
+///   "rust, rust ; rust"                    → ["rust"]                        // dedup
+///   "mcdonald's"                           → ["mcdonald's"]                  // mid apostrophe kept
 func splitSearchTerms(_ input: String) -> [String] {
     var seen = Set<String>()
     var out: [String] = []
-    let strippedSet = CharacterSet(charactersIn: "(),")
-    for raw in input.split(whereSeparator: { $0 == "," || $0 == ";" }) {
-        let cleanedScalars = String(raw).unicodeScalars.map { strippedSet.contains($0) ? Unicode.Scalar(" ") : $0 }
-        let cleaned = String(String.UnicodeScalarView(cleanedScalars))
-            .trimmingCharacters(in: .whitespaces)
-        guard !cleaned.isEmpty else { continue }
+    var current = ""
+    var inDouble = false
+    var inSingle = false
+
+    func flush() {
+        // Replace PostgREST-hostile chars with spaces, collapse internal
+        // whitespace, then trim.
+        var cleaned = current
+            .replacingOccurrences(of: "(", with: " ")
+            .replacingOccurrences(of: ")", with: " ")
+            .replacingOccurrences(of: ",", with: " ")
+        cleaned = cleaned
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        // Strip leading/trailing stray quotes from unbalanced phrases
+        // like `"unclosed` or `engineer"`. Mid-word apostrophes are
+        // unaffected because we never opened phrase mode for them.
+        while let first = cleaned.first, first == "'" || first == "\"" {
+            cleaned.removeFirst()
+        }
+        while let last = cleaned.last, last == "'" || last == "\"" {
+            cleaned.removeLast()
+        }
+        cleaned = cleaned.trimmingCharacters(in: .whitespaces)
+        current = ""
+        guard !cleaned.isEmpty else { return }
         let key = cleaned.lowercased()
-        if seen.contains(key) { continue }
+        if seen.contains(key) { return }
         seen.insert(key)
         out.append(cleaned)
     }
+
+    for c in input {
+        if inDouble {
+            if c == "\"" { inDouble = false; flush() }
+            else { current.append(c) }
+            continue
+        }
+        if inSingle {
+            if c == "'" { inSingle = false; flush() }
+            else { current.append(c) }
+            continue
+        }
+        if c == "\"" {
+            if !current.isEmpty { flush() }
+            inDouble = true
+            continue
+        }
+        if c == "'" {
+            // Open phrase mode only when the apostrophe starts a token
+            // — otherwise it's mid-word (e.g. `mcdonald's`).
+            if current.isEmpty {
+                inSingle = true
+            } else {
+                current.append(c)
+            }
+            continue
+        }
+        if c.isWhitespace || c == "," || c == ";" {
+            if !current.isEmpty { flush() }
+            continue
+        }
+        current.append(c)
+    }
+    if !current.isEmpty { flush() }
     return out
 }
 
-/// Build a PostgREST ``or(...)`` clause covering the search terms
-/// across the given columns. Each term × each column = one ILIKE
-/// substring comparison; everything OR'd.
+/// Build one PostgREST `or(...)` clause **per term**. Each clause ORs
+/// the term against every column — `title.ilike.*t*,company.ilike.*t*`
+/// — and the caller chains `.or(clause)` once per clause so the
+/// request gains one repeated `or=…` query parameter per term.
+/// PostgREST joins those with AND, giving us
 ///
-/// Returns ``nil`` when the term list is empty (caller skips the
-/// filter).
+///     (t1 in title|company) AND (t2 in title|company) AND …
 ///
-/// Example: ``searchOrClause(["intern", "engineer"], ["title", "company"])``
-///   →  "title.ilike.*intern*,title.ilike.*engineer*,company.ilike.*intern*,company.ilike.*engineer*"
+/// for free, with no nested-filter syntax to debug.
 ///
-/// The trigram indexes on ``title`` + ``company`` cover the ILIKE
-/// lookup; multi-term queries don't change index usage compared to the
-/// old single-substring shape.
-func searchOrClause(_ terms: [String], columns: [String]) -> String? {
-    guard !terms.isEmpty else { return nil }
-    var parts: [String] = []
-    for col in columns {
-        for t in terms {
-            parts.append("\(col).ilike.*\(t)*")
-        }
+/// Returns an empty array when the term list is empty (caller skips).
+///
+/// Example: `searchTermClauses(["lululemon", "staff"], ["title", "company"])`
+///   → [
+///       "title.ilike.*lululemon*,company.ilike.*lululemon*",
+///       "title.ilike.*staff*,company.ilike.*staff*",
+///     ]
+func searchTermClauses(_ terms: [String], columns: [String]) -> [String] {
+    return terms.map { t in
+        columns.map { col in "\(col).ilike.*\(t)*" }.joined(separator: ",")
     }
-    return parts.joined(separator: ",")
 }

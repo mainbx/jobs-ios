@@ -61,9 +61,9 @@ already in the checked-in `jobs-ios.xcodeproj/project.pbxproj`.
 ```
 Sources/
 ├── JobsApp.swift           # SwiftUI @main entry point
-├── FeedView.swift          # Scrollable list + search + chip row + date menu
+├── FeedView.swift          # Scrollable list + search field + filter bar
 ├── FeedViewModel.swift     # @Observable model, async load + filter state
-├── Filters.swift           # Keyword catalog + DateRange enum + FilterState
+├── Filters.swift           # Search tokenizer + DateRange enum + FilterState
 ├── Job.swift               # Codable row type mirroring public.jobs
 └── SupabaseClient.swift    # Singleton SupabaseClient wired from Info.plist
 Info.plist                  # App metadata + Supabase build-setting bridge
@@ -71,9 +71,9 @@ Package.swift               # Typecheck-only SPM manifest (see below)
 ```
 
 Schema types live in `Job.swift`. Keep them in sync with the
-backend's `sql/supabase_schema.sql`. The keyword catalog in
+backend's `sql/supabase_schema.sql`. The search tokenizer in
 `Filters.swift` mirrors the web frontend's `src/lib/filters.ts` —
-keep the two lists in sync by hand.
+keep the two implementations in sync by hand.
 
 ### `Package.swift` is for type-checking only
 
@@ -107,11 +107,11 @@ rows; the iOS query also includes
 Four filters are surfaced at the top of the feed, plus a numbered
 paginator at the bottom:
 
-- **Search** (native SwiftUI `.searchable`) — matches title OR company
-  (ILIKE substring), debounced 250 ms so typing doesn't hammer Supabase.
-- **Keyword chips** — horizontal scrollable row of pre-defined labels
-  (Software, Backend, Robotics, Fall 2026, …). Tap to toggle. Multiple
-  selected chips combine with OR logic on the title.
+- **Search** (native SwiftUI `.searchable`) — free text, Google-style
+  AND-of-keywords. Whitespace, `,`, and `;` are all separators;
+  quoted phrases (`"staff software engineer"`) stay as a single
+  term. Every term must hit either the title or the company.
+  ILIKE substring, debounced 250 ms.
 - **Posted-date menu** — Any time (default) / 24h / 7d / 30d. Filters
   on `effective_posted_at`, populated by the backend as board
   `posted_at` when available, else `first_seen`.

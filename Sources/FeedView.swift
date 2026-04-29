@@ -34,7 +34,7 @@ struct FeedView: View {
             #endif
             .searchable(
                 text: $searchText,
-                prompt: "Search titles, companies — comma- or semicolon-separated"
+                prompt: "Search title or company"
             )
             .onChange(of: searchText) { _, new in
                 // Debounce to avoid one query per keystroke.
@@ -66,8 +66,9 @@ struct FeedView: View {
         VStack(alignment: .leading, spacing: 8) {
             // Filter bar with date / remote / tier menus and a Clear
             // button. Free-text search lives in the navigation
-            // ``.searchable`` slot above; multi-keyword input is
-            // entered as comma- or semicolon-separated terms there.
+            // ``.searchable`` slot above; whitespace, commas, and
+            // semicolons are all separators, and every term must hit
+            // either the title or the company (Google-style AND).
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 16) {
                     DateRangeMenu(selection: $filters.posted)
