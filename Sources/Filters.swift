@@ -5,29 +5,33 @@
 //  Filter helpers + types for the feed. Mirrors the web's
 //  `lib/filters.ts` — keep semantics in sync by hand.
 //
-//  Filter semantics:
-//    - Free-text `search` is **Google-style AND-of-keywords**. The
-//      user types any number of words (separated by whitespace,
-//      `,`, or `;`); a row matches only when *every* term is found in
-//      either the title or the company. Quoted phrases
-//      (`"staff software engineer"` / `'lululemon devops'`) stay as a
-//      single term. The previous OR semantics meant typing more
-//      words *broadened* the result set, opposite of how every other
-//      search box works.
-//    - `DateRange` applies to `effective_posted_at`: backend-normalized
-//      board `posted_at` when known, else `first_seen`.
-//    - `RemoteFilter` maps to the `is_remote` column. "All" leaves the
-//      filter off. "Remote only" keeps `is_remote=true`. The feed is
-//      already US-scoped by Supabase.
-//    - `TierFilter` maps to the `tier` column populated at
-//      Supabase-sync time by the backend's tier classifier.
+//  Search is **Google-style** with the four operators users actually
+//  muscle-memory:
 //
-//  Wire shape per term: each term emits one PostgREST `or(...)` clause
-//  that ORs `title ILIKE *t*` against `company ILIKE *t*`. The caller
-//  chains `.or(clause)` once per term; supabase-swift + PostgREST
-//  joins repeated `or=` query parameters with AND. Trigram indexes
+//    plain words            lululemon staff engineer
+//                           ↑ AND'd; each word must hit title|company
+//    quoted phrases         "staff software engineer"
+//                           'morgan stanley'
+//    negation               -intern   -"new grad"
+//                           ↑ row must NOT contain that term
+//    field constraints      title:engineer
+//                           company:"morgan stanley"
+//                           -title:vp
+//
+//  All four combine freely. Whitespace, `,`, and `;` are interchangeable
+//  separators.
+//
+//  - `DateRange` applies to `effective_posted_at` (board `posted_at`
+//    when known, else `first_seen`).
+//  - `RemoteFilter` maps to the `is_remote` column.
+//  - `TierFilter` maps to the `tier` column populated at sync time.
+//
+//  Wire shape: `parseSearchAtoms` returns a list of `SearchAtom`s.
+//  Each atom becomes one or two PostgREST filters (see the type doc).
+//  PostgREST joins repeated request params with AND, so we never
+//  construct nested `and(or(...))` URL syntax by hand. Trigram indexes
 //  (`idx_jobs_title_trgm`, `idx_jobs_company_trgm`, `pg_trgm`) cover
-//  every ILIKE.
+//  every ILIKE / NOT ILIKE.
 //
 //  The pre-defined keyword chip catalog was removed earlier in favor
 //  of free-text search.
@@ -148,52 +152,138 @@ struct FilterState: Equatable {
     }
 }
 
-/// Split a free-text search input into individual ILIKE-ready terms.
-///
-/// Tokenizer:
-///   - Quoted phrases (`"staff software engineer"` or
-///     `'lululemon devops'`) stay as a single term. Quotes only open
-///     phrase mode at the start of a token, so mid-word apostrophes
-///     (`mcdonald's`, `o'reilly`) survive intact.
-///   - Anything else is split on whitespace, `,` and `;` — all three
-///     are treated identically. (Whitespace was *not* a separator
-///     before, which is why typing "lululemon staff software engineer"
-///     used to return zero rows: it became one giant 32-char term.)
-///   - Empty terms are dropped, case-insensitive de-dup, internal
-///     whitespace collapsed.
-///   - Characters that would break PostgREST's `or(...)` syntax —
-///     `(`, `)`, `,` — are replaced with spaces. Stray leading or
-///     trailing quotes (from unbalanced input like `staff "engineer`)
-///     are stripped.
-///
-/// Examples:
-///   ""                                     → []
-///   "rust"                                 → ["rust"]
-///   "lululemon staff software engineer"    → ["lululemon", "staff", "software", "engineer"]
-///   "staff software engineer; lululemon"   → ["staff", "software", "engineer", "lululemon"]
-///   "\"staff software engineer\" lululemon" → ["staff software engineer", "lululemon"]
-///   "rust, rust ; rust"                    → ["rust"]                        // dedup
-///   "mcdonald's"                           → ["mcdonald's"]                  // mid apostrophe kept
-func splitSearchTerms(_ input: String) -> [String] {
-    var seen = Set<String>()
-    var out: [String] = []
-    var current = ""
-    var inDouble = false
-    var inSingle = false
+/// Column the `field:value` operator is allowed to constrain to.
+/// Anything else falls through to `.any` so a stray `email:foo@bar.com`
+/// paste doesn't blow up the query.
+enum SearchScope: String {
+    case any
+    case title
+    case company
+}
 
-    func flush() {
-        // Replace PostgREST-hostile chars with spaces, collapse internal
-        // whitespace, then trim.
-        var cleaned = current
+/// One parsed unit from a Google-style search input. The query layer
+/// applies each atom as its own PostgREST filter — repeated request
+/// params AND together at the URL level, which is exactly what
+/// "every term must match somewhere" needs.
+///
+/// Wire shape per atom (`*` = ILIKE wildcard in PostgREST URL syntax):
+///
+///   negate=false, scope=.any      → `or=(title.ilike.*v*,company.ilike.*v*)`
+///   negate=false, scope=.title    → `title=ilike.*v*`
+///   negate=false, scope=.company  → `company=ilike.*v*`
+///   negate=true,  scope=.any      → `title=not.ilike.*v*` AND `company=not.ilike.*v*`
+///                                   (de Morgan: NOT(A OR B) = NOT A AND NOT B)
+///   negate=true,  scope=.title    → `title=not.ilike.*v*`
+///   negate=true,  scope=.company  → `company=not.ilike.*v*`
+struct SearchAtom: Equatable {
+    /// True for `-term`, `-"phrase"`, or `-field:value` (exclude).
+    var negate: Bool
+    /// Column constraint — `.any` searches title OR company.
+    var scope: SearchScope
+    /// ILIKE substring (no wildcards yet — caller wraps in `*…*`).
+    var value: String
+}
+
+/// Parse a free-text Google-style search input into atoms.
+///
+/// Recognised syntax (all combinable):
+///
+///   bare keyword            `lululemon`              must appear in title|company
+///   quoted phrase           `"staff engineer"`       phrase preserved as one term
+///                           `'morgan stanley'`       (apostrophe form too)
+///   negation                `-intern`                row must NOT contain "intern"
+///                           `-"new grad"`            anywhere in title or company
+///   field constraint        `title:engineer`         match only that column
+///                           `company:"morgan stanley"`
+///   negated field           `-title:vp`              that column must NOT contain "vp"
+///
+/// Separators between atoms: whitespace, `,`, and `;` — all interchangeable.
+///
+/// Quoting rules: `"…"` and `'…'` only open phrase mode at the *start*
+/// of an atom, so mid-word apostrophes (`mcdonald's`, `o'reilly`)
+/// survive intact. Unbalanced quotes are tolerated — the rest of the
+/// input is consumed up to EOF.
+///
+/// Field whitelist: only `title:` and `company:` are recognised. Other
+/// `xyz:abc` patterns fall through to a bare `xyz:abc` term (no special
+/// meaning) so users don't get silent zero-result surprises.
+///
+/// Implementation note: the TS sibling in `lib/filters.ts` uses the
+/// same algorithm. Output verified bit-identical across the same test
+/// cases (see commit history).
+func parseSearchAtoms(_ input: String) -> [SearchAtom] {
+    var seen = Set<String>()
+    var out: [SearchAtom] = []
+    let chars = Array(input)
+    let n = chars.count
+    var i = 0
+
+    func isSep(_ c: Character) -> Bool {
+        c.isWhitespace || c == "," || c == ";"
+    }
+
+    while i < n {
+        // Skip leading separators.
+        while i < n && isSep(chars[i]) { i += 1 }
+        if i >= n { break }
+
+        var negate = false
+        var scope: SearchScope = .any
+
+        // Leading `-` for negation. Must be followed by a non-separator,
+        // otherwise it's a stray dash — skip past it.
+        if chars[i] == "-" {
+            let peek = i + 1
+            if peek >= n || isSep(chars[peek]) {
+                i += 1
+                continue
+            }
+            negate = true
+            i = peek
+        }
+
+        // `field:` prefix (only `title:` and `company:` recognised,
+        // case-insensitive).
+        let remainingStart = i
+        let lookahead = String(chars[remainingStart..<min(remainingStart + 9, n)])
+            .lowercased()
+        if lookahead.hasPrefix("title:") {
+            scope = .title
+            i += 6
+        } else if lookahead.hasPrefix("company:") {
+            scope = .company
+            i += 8
+        }
+        if scope != .any && (i >= n || isSep(chars[i])) {
+            // `title:` / `-title:` with empty value — drop the atom.
+            continue
+        }
+
+        // Collect the value: quoted phrase or bare run.
+        var value: String
+        if i < n && (chars[i] == "\"" || chars[i] == "'") {
+            let quote = chars[i]
+            i += 1
+            var end = i
+            while end < n && chars[end] != quote { end += 1 }
+            value = String(chars[i..<end])
+            i = end < n ? end + 1 : end
+        } else {
+            var end = i
+            while end < n && !isSep(chars[end]) { end += 1 }
+            value = String(chars[i..<end])
+            i = end
+        }
+
+        // Strip PostgREST-hostile chars + collapse whitespace.
+        var cleaned = value
             .replacingOccurrences(of: "(", with: " ")
             .replacingOccurrences(of: ")", with: " ")
             .replacingOccurrences(of: ",", with: " ")
         cleaned = cleaned
             .split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")
-        // Strip leading/trailing stray quotes from unbalanced phrases
-        // like `"unclosed` or `engineer"`. Mid-word apostrophes are
-        // unaffected because we never opened phrase mode for them.
+        // Strip stray leading/trailing quotes from unbalanced input.
         while let first = cleaned.first, first == "'" || first == "\"" {
             cleaned.removeFirst()
         }
@@ -201,69 +291,23 @@ func splitSearchTerms(_ input: String) -> [String] {
             cleaned.removeLast()
         }
         cleaned = cleaned.trimmingCharacters(in: .whitespaces)
-        current = ""
-        guard !cleaned.isEmpty else { return }
-        let key = cleaned.lowercased()
-        if seen.contains(key) { return }
+        if cleaned.isEmpty { continue }
+
+        // Dedup by full atom signature (`-foo foo` keeps both, but
+        // `foo foo` collapses to one).
+        let key = "\(negate ? "-" : "+")\(scope.rawValue):\(cleaned.lowercased())"
+        if seen.contains(key) { continue }
         seen.insert(key)
-        out.append(cleaned)
+        out.append(SearchAtom(negate: negate, scope: scope, value: cleaned))
     }
 
-    for c in input {
-        if inDouble {
-            if c == "\"" { inDouble = false; flush() }
-            else { current.append(c) }
-            continue
-        }
-        if inSingle {
-            if c == "'" { inSingle = false; flush() }
-            else { current.append(c) }
-            continue
-        }
-        if c == "\"" {
-            if !current.isEmpty { flush() }
-            inDouble = true
-            continue
-        }
-        if c == "'" {
-            // Open phrase mode only when the apostrophe starts a token
-            // — otherwise it's mid-word (e.g. `mcdonald's`).
-            if current.isEmpty {
-                inSingle = true
-            } else {
-                current.append(c)
-            }
-            continue
-        }
-        if c.isWhitespace || c == "," || c == ";" {
-            if !current.isEmpty { flush() }
-            continue
-        }
-        current.append(c)
-    }
-    if !current.isEmpty { flush() }
     return out
 }
 
-/// Build one PostgREST `or(...)` clause **per term**. Each clause ORs
-/// the term against every column — `title.ilike.*t*,company.ilike.*t*`
-/// — and the caller chains `.or(clause)` once per clause so the
-/// request gains one repeated `or=…` query parameter per term.
-/// PostgREST joins those with AND, giving us
-///
-///     (t1 in title|company) AND (t2 in title|company) AND …
-///
-/// for free, with no nested-filter syntax to debug.
-///
-/// Returns an empty array when the term list is empty (caller skips).
-///
-/// Example: `searchTermClauses(["lululemon", "staff"], ["title", "company"])`
-///   → [
-///       "title.ilike.*lululemon*,company.ilike.*lululemon*",
-///       "title.ilike.*staff*,company.ilike.*staff*",
-///     ]
-func searchTermClauses(_ terms: [String], columns: [String]) -> [String] {
-    return terms.map { t in
-        columns.map { col in "\(col).ilike.*\(t)*" }.joined(separator: ",")
-    }
+/// Backward-compat shim — bare keyword strings only (no negation, no
+/// field scope). Callers should consume `parseSearchAtoms` directly.
+func splitSearchTerms(_ input: String) -> [String] {
+    parseSearchAtoms(input)
+        .filter { !$0.negate && $0.scope == .any }
+        .map { $0.value }
 }

@@ -102,23 +102,49 @@ final class FeedViewModel {
                 )
                 .eq("us_or_remote_eligible", value: true)
 
-            // Free-text search — Google-style AND-of-keywords. The
-            // user types any number of words (separated by whitespace,
-            // `,`, or `;`); every term must hit at least one of
-            // (title, company). Quoted phrases (`"staff software
-            // engineer"`) stay as a single term.
+            // Google-style free-text search. `parseSearchAtoms` turns
+            // the raw input into a structured atom list: bare keywords,
+            // quoted phrases, negation (`-`), and field constraints
+            // (`title:` / `company:`). Each atom becomes one or two
+            // PostgREST filters; supabase-swift + PostgREST joins
+            // repeated request params with AND, so we never construct
+            // nested `and(or(...))` URL syntax by hand.
             //
-            // Wire shape: `searchTermClauses` returns one OR clause
-            // per term; chaining `.or(clause)` once per clause emits
-            // one `or=…` query parameter per term. supabase-swift +
-            // PostgREST joins repeated `or=` params with AND for
-            // free, giving us
-            // `(t1 in title|company) AND (t2 in title|company) AND …`.
-            // Trigram indexes cover every ILIKE; the planner picks
-            // the most selective term first. Mirrors the web.
-            let terms = splitSearchTerms(filters.search)
-            for clause in searchTermClauses(terms, columns: ["title", "company"]) {
-                query = query.or(clause)
+            // Per-atom wire shape (`*` = ILIKE wildcard in URL form):
+            //   +any  v   →  or=(title.ilike.*v*,company.ilike.*v*)
+            //   +tit  v   →  title=ilike.*v*    (raw filter via .or)
+            //   +cmp  v   →  company=ilike.*v*  (raw filter via .or)
+            //   -any  v   →  title=not.ilike.*v* AND company=not.ilike.*v*
+            //                (de Morgan: NOT(A OR B) = NOT A AND NOT B)
+            //   -tit  v   →  title=not.ilike.*v*
+            //   -cmp  v   →  company=not.ilike.*v*
+            //
+            // Trigram indexes (`idx_jobs_title_trgm`,
+            // `idx_jobs_company_trgm`, `pg_trgm`) cover every ILIKE /
+            // NOT ILIKE. Mirrors the web exactly.
+            for atom in parseSearchAtoms(filters.search) {
+                let pat = "*\(atom.value)*"
+                if atom.negate {
+                    switch atom.scope {
+                    case .any:
+                        query = query
+                            .filter("title", operator: "not.ilike", value: pat)
+                            .filter("company", operator: "not.ilike", value: pat)
+                    case .title:
+                        query = query.filter("title", operator: "not.ilike", value: pat)
+                    case .company:
+                        query = query.filter("company", operator: "not.ilike", value: pat)
+                    }
+                } else {
+                    switch atom.scope {
+                    case .any:
+                        query = query.or("title.ilike.\(pat),company.ilike.\(pat)")
+                    case .title:
+                        query = query.ilike("title", pattern: pat)
+                    case .company:
+                        query = query.ilike("company", pattern: pat)
+                    }
+                }
             }
 
             // Date range: filter on the precomputed

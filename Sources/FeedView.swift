@@ -36,6 +36,46 @@ struct FeedView: View {
                 text: $searchText,
                 prompt: "Search title or company"
             )
+            .searchSuggestions {
+                // Discoverability for the operator vocabulary: when
+                // the user focuses an empty search field, surface the
+                // four supported operators as labelled rows. These
+                // are display-only (no `searchCompletion`) — tapping
+                // them shouldn't replace the user's draft.
+                if searchText.isEmpty {
+                    Section("Search operators") {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("staff engineer").font(.system(.body, design: .monospaced))
+                                Text("each word must appear in title or company")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        } icon: { Image(systemName: "text.magnifyingglass") }
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("\"new grad\"").font(.system(.body, design: .monospaced))
+                                Text("quoted phrase, exact substring")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        } icon: { Image(systemName: "quote.opening") }
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("-intern").font(.system(.body, design: .monospaced))
+                                Text("exclude rows containing the term")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        } icon: { Image(systemName: "minus.circle") }
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("title:engineer  company:google")
+                                    .font(.system(.body, design: .monospaced))
+                                Text("constrain to a column")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        } icon: { Image(systemName: "square.dashed") }
+                    }
+                }
+            }
             .onChange(of: searchText) { _, new in
                 // Debounce to avoid one query per keystroke.
                 searchTask?.cancel()

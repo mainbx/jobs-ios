@@ -107,11 +107,22 @@ rows; the iOS query also includes
 Four filters are surfaced at the top of the feed, plus a numbered
 paginator at the bottom:
 
-- **Search** (native SwiftUI `.searchable`) — free text, Google-style
-  AND-of-keywords. Whitespace, `,`, and `;` are all separators;
-  quoted phrases (`"staff software engineer"`) stay as a single
-  term. Every term must hit either the title or the company.
-  ILIKE substring, debounced 250 ms.
+- **Search** (native SwiftUI `.searchable`) — Google-style free
+  text, debounced 250 ms. The same grammar as the web feed (see
+  [`Sources/Filters.swift`](Sources/Filters.swift) for the parser):
+
+  | Syntax                        | Effect                                                        |
+  |-------------------------------|---------------------------------------------------------------|
+  | `staff engineer`              | each word must appear in title or company (AND'd)             |
+  | `"staff software engineer"`   | quoted phrase preserved as one term                           |
+  | `-intern` / `-"new grad"`     | exclude rows containing that term anywhere                    |
+  | `title:engineer`              | constrain to the `title` column only                          |
+  | `company:"morgan stanley"`    | constrain to the `company` column only                        |
+  | `-title:vp`                   | combine: exclude on a specific column                         |
+
+  When the search field is focused with no draft, a `.searchSuggestions`
+  panel surfaces the operator vocabulary as discoverability.
+  Whitespace, `,`, and `;` are interchangeable separators.
 - **Posted-date menu** — Any time (default) / 24h / 7d / 30d. Filters
   on `effective_posted_at`, populated by the backend as board
   `posted_at` when available, else `first_seen`.
