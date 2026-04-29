@@ -163,7 +163,7 @@ struct FeedView: View {
         } else {
             List {
                 ForEach(model.jobs) { job in
-                    if let url = URL(string: job.postingUrl) {
+                    if let url = job.safePostingURL {
                         Link(destination: url) { JobRow(job: job) }
                             .buttonStyle(.plain)
                     } else {
@@ -492,36 +492,41 @@ private struct JobRow: View {
         .padding(.vertical, 4)
     }
 
-    private func relativeTime(from date: Date) -> String {
-        let interval = Date().timeIntervalSince(date)
-        let mins = Int(max(0, interval / 60))
-        if mins < 60 { return "\(mins)m" }
-        let hrs = mins / 60
-        if hrs < 24 { return "\(hrs)h" }
-        return "\(hrs / 24)d"
-    }
-
+    /// Format a job's age for the feed row's right-side timestamp.
+    ///
+    /// Bucketed thresholds rather than raw "Nd ago" forever — preserves
+    /// the truthful `effective_posted_at` across the whole range (even
+    /// ancient zombie reqs that boards left open since 2012) without
+    /// the long tail looking like a UI bug.
+    ///
+    ///   <  1 hour     → "posted Nm ago" (or "just now" at zero)
+    ///   < 24 hours    → "posted Nh ago"
+    ///   < 30 days     → "posted Nd ago"
+    ///   < 12 months   → "posted Nmo ago"
+    ///   < 24 months   → "posted 1y+ ago"
+    ///   ≥ 24 months   → "open since YYYY"  ← signals "stale listing" to the user
+    ///
+    /// Mirrors the web's `formatPostedAge` in `app/page.tsx` exactly so
+    /// users switching between surfaces see identical strings.
     private func displayAge(for job: Job) -> String {
-        // Prefer a real posted_at when the scraper captured one.
-        // The backend guarantees a valid ISO-8601 UTC string when non-empty.
-        if !job.postedAt.isEmpty,
-           let posted = Self.iso8601.date(from: job.postedAt) ?? Self.iso8601NoFrac.date(from: job.postedAt)
-        {
-            return "posted \(relativeTime(from: posted))"
+        guard let date = job.effectivePostedAt else { return "" }
+        let interval = max(0, Date().timeIntervalSince(date))
+        let minutes = interval / 60
+        if minutes < 60 {
+            let m = Int(minutes.rounded())
+            return m == 0 ? "posted just now" : "posted \(m)m ago"
         }
-        return "seen \(relativeTime(from: job.lastSeen))"
+        let hours = minutes / 60
+        if hours < 24 { return "posted \(Int(hours.rounded()))h ago" }
+        let days = hours / 24
+        if days < 30 { return "posted \(Int(days.rounded()))d ago" }
+        let months = days / 30
+        if months < 12 { return "posted \(Int(months.rounded()))mo ago" }
+        let years = days / 365
+        if years < 2 { return "posted 1y+ ago" }
+        let year = Calendar(identifier: .gregorian).component(.year, from: date)
+        return "open since \(year)"
     }
-
-    private static let iso8601: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
-    private static let iso8601NoFrac: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f
-    }()
 }
 
 // The #Preview macro plugin only loads under Xcode. Under SwiftPM

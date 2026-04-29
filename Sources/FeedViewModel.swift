@@ -4,10 +4,9 @@
 //
 //  Fetches a page of the most-recently-seen relevant jobs from
 //  Supabase, optionally narrowed by a `FilterState` (multi-keyword
-//  search + posted-at window + remote + tier filter). The RLS policy
-//  `jobs_public_read` already scopes to the public feed slice
-//  (`us_or_remote_eligible = true AND relevant = true`). The app still
-//  sends the US/remote filter as a belt-and-braces guard.
+//  search + posted-at window + remote + tier filter). The app reads the
+//  narrow `public_jobs_feed` view and still sends the US/remote filter
+//  as a belt-and-braces guard.
 //
 //  Pagination is numbered — each load replaces the list and jumps to
 //  the requested page. Total-row count comes from PostgREST's
@@ -93,11 +92,11 @@ final class FeedViewModel {
             // count in the Content-Range response header; we read it
             // via `response.count`.
             var query = SupabaseAPI.client
-                .from("jobs")
+                .from("public_jobs_feed")
                 .select(
                     "canonical_key, company, title, posting_url, " +
                     "location, us_or_remote_eligible, is_remote, " +
-                    "last_seen, posted_at",
+                    "effective_posted_at",
                     count: .exact
                 )
                 .eq("us_or_remote_eligible", value: true)

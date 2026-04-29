@@ -2,11 +2,17 @@
 //  Job.swift
 //  jobs-ios
 //
-//  Mirrors the row shape of Supabase `public.jobs`. Only columns the app
-//  actually reads are decoded — keeps the feed payload small and forward-
-//  compatible if the backend adds new columns.
+//  Mirrors the row shape of Supabase `public_jobs_feed`. Only columns the
+//  app actually reads are decoded — keeps the feed payload small and
+//  forward-compatible if the backend adds new columns.
 //
 //  Source of truth for the schema: backend's sql/supabase_schema.sql.
+//
+//  As of 2026-04-29, `last_seen` and `posted_at` were dropped from the
+//  public mirror. The single timestamp surfaced is `effective_posted_at`,
+//  computed at sync time as the parsed `posted_at` when valid, else
+//  `first_seen`. The view returns `null` only for rows that somehow
+//  lost both — defensive `Date?` here.
 //
 
 import Foundation
@@ -22,14 +28,27 @@ struct Job: Codable, Identifiable, Hashable {
     /// fragment actually names a remote-work mode. Drives the green
     /// "Remote" pill in `FeedView`.
     let isRemote: Bool
-    let lastSeen: Date
-    /// ISO-8601 UTC timestamp when the board first advertised the
-    /// posting, or empty when the scraper couldn't capture one. The
-    /// backend guarantees parseability when non-empty.
-    let postedAt: String
+    /// Backend-computed canonical age timestamp. Parsed `posted_at`
+    /// when the board exposed a valid one, else `first_seen`. The
+    /// frontend formats this with bucketed thresholds (`formatPostedAge`
+    /// in `FeedView.swift`) — "posted Nh ago", "posted Nmo ago",
+    /// "posted 1y+ ago", or "open since YYYY" for ancient zombie reqs.
+    let effectivePostedAt: Date?
 
     /// SwiftUI `Identifiable` — `canonical_key` is already unique.
     var id: String { canonicalKey }
+
+    var safePostingURL: URL? {
+        guard
+            let url = URL(string: postingUrl),
+            let scheme = url.scheme?.lowercased(),
+            (scheme == "http" || scheme == "https"),
+            url.host != nil
+        else {
+            return nil
+        }
+        return url
+    }
 
     enum CodingKeys: String, CodingKey {
         case canonicalKey = "canonical_key"
@@ -37,7 +56,6 @@ struct Job: Codable, Identifiable, Hashable {
         case postingUrl = "posting_url"
         case usOrRemoteEligible = "us_or_remote_eligible"
         case isRemote = "is_remote"
-        case lastSeen = "last_seen"
-        case postedAt = "posted_at"
+        case effectivePostedAt = "effective_posted_at"
     }
 }
