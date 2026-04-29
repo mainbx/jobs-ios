@@ -22,10 +22,18 @@ import Supabase
 private let pageSize = 100
 
 /// Per-company cap on the curated landing page. See the matching
-/// constant in the web's `app/page.tsx` — three is the lowest that
-/// comfortably fills page 1 (~50–80 rows after capping) without one
-/// company dominating. Tunable knob.
-private let landingPerCompanyCap = 3
+/// constant in the web's `app/page.tsx`. Five rows × ~30 active
+/// posters comfortably fills the 100-row page while preventing any
+/// one company from dominating.
+private let landingPerCompanyCap = 5
+
+/// Pool fetch depth — Supabase caps a single query at 1000 rows;
+/// paginating through `landingPoolPages * 1000` rows surfaces
+/// companies whose freshest job is slightly older but still
+/// active-posting. Tested 2026-04-29: 3 pages → 52 distinct
+/// FAANG+/Tier 1 companies (vs. 30 from a single page), enough
+/// to fill page 1 with ~47 distinct companies on landing.
+private let landingPoolPages = 3
 
 /// Tier values that anchor the curated landing experience. The
 /// mirror's `tier` column holds these exact strings (set at sync
@@ -250,30 +258,45 @@ final class FeedViewModel {
     /// gives users a way to browse beyond the curated landing.
     private func performLandingLoad(filters: FilterState) async {
         do {
-            // Pool fetch — up to 1000 newest FAANG+/Tier 1 rows.
-            // The trigram index on `effective_posted_at` covers
-            // the scan; `count: .exact` would slow this down
-            // without value (we get the full-feed count below).
-            let poolResp = try await SupabaseAPI.client
-                .from("jobs")
-                .select(
-                    "canonical_key, company, title, posting_url, " +
-                    "location, us_or_remote_eligible, is_remote, " +
-                    "last_seen, posted_at"
-                )
-                .eq("us_or_remote_eligible", value: true)
-                .in("tier", values: landingTiers)
-                .order("effective_posted_at", ascending: false)
-                .limit(1000)
-                .execute()
+            // Pool fetch — paginate through the first
+            // `landingPoolPages * 1000` newest FAANG+/Tier 1 rows.
+            // Supabase caps a single query at 1000 rows, so we use
+            // `.range(from:to:)` to grab the next slice; subsequent
+            // pages bring in companies whose freshest job is
+            // slightly older but still actively-posted. Stops early
+            // if a page returns fewer rows than requested (pool
+            // exhausted).
+            var pool: [Job] = []
+            for pageIdx in 0..<landingPoolPages {
+                let start = pageIdx * 1000
+                let end = start + 999
+                let resp = try await SupabaseAPI.client
+                    .from("jobs")
+                    .select(
+                        "canonical_key, company, title, posting_url, " +
+                        "location, us_or_remote_eligible, is_remote, " +
+                        "last_seen, posted_at"
+                    )
+                    .eq("us_or_remote_eligible", value: true)
+                    .in("tier", values: landingTiers)
+                    .order("effective_posted_at", ascending: false)
+                    .range(from: start, to: end)
+                    .execute()
 
-            if Task.isCancelled { return }
+                if Task.isCancelled { return }
 
-            let pool = try JSONDecoder.supabase.decode([Job].self, from: poolResp.data)
+                let rows = try JSONDecoder.supabase.decode([Job].self, from: resp.data)
+                if rows.isEmpty { break }
+                pool.append(contentsOf: rows)
+                if rows.count < 1000 { break }
+            }
 
             // Per-company cap — iterate newest-first so the rows
             // we surface from each company are also that company's
-            // freshest.
+            // freshest. Pool came back ordered by
+            // `effective_posted_at DESC` from each `.range()` call,
+            // and the pages themselves were appended in order, so
+            // it's already correctly ordered for capping.
             var byCompany: [String: [Job]] = [:]
             for j in pool {
                 let list = byCompany[j.company] ?? []
