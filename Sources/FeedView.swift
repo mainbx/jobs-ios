@@ -114,10 +114,18 @@ struct FeedView: View {
                     DateRangeMenu(selection: $filters.posted)
                     RemoteFilterMenu(selection: $filters.remote)
                     TierFilterMenu(selection: $filters.tier)
-                    if !filters.isEmpty {
-                        Button("Clear") {
-                            filters = FilterState()
-                            searchText = ""
+                    // "Clear filters" is decoupled from the search
+                    // field's own clear (the native `.searchable` x).
+                    // Resets only the date/remote/tier dimensions and
+                    // preserves the user's search query — a user
+                    // often wants to drop the filter set while
+                    // keeping the search, or vice versa, and a
+                    // single combined Clear conflates the two.
+                    if filters.hasNonSearchFilters {
+                        Button("Clear filters") {
+                            filters.posted = .any
+                            filters.remote = .all
+                            filters.tier = .all
                         }
                         .font(.footnote)
                     }

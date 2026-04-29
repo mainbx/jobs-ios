@@ -147,8 +147,17 @@ struct FilterState: Equatable {
     var remote: RemoteFilter = .all
     var tier: TierFilter = .all
 
+    /// `true` iff every dimension (including search) is at its default
+    /// — the only time the *whole* feed is unfiltered.
     var isEmpty: Bool {
-        search.isEmpty && posted == .any && remote == .all && tier == .all
+        search.isEmpty && !hasNonSearchFilters
+    }
+
+    /// `true` iff the date / remote / tier dimensions have any active
+    /// constraint, ignoring search. Drives the "Clear filters" button
+    /// — keeping it decoupled from the search field's own clear.
+    var hasNonSearchFilters: Bool {
+        posted != .any || remote != .all || tier != .all
     }
 }
 
