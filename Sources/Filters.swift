@@ -127,7 +127,11 @@ enum SortOrder: String, CaseIterable, Identifiable {
 /// `src/lib/filters.ts::TIER_FILTERS`.
 enum TierFilter: String, CaseIterable, Identifiable {
     case all = "all"
-    case faang = "faang"
+    // Renamed from `.faang` / `"FAANG+"` on 2026-04-29: Facebook is
+    // Meta now, the modern acronym is MAANG (Meta, Apple, Amazon,
+    // Netflix, Google). The dbValue + Supabase rows were flipped
+    // atomically; no migration needed on the iOS side.
+    case maang = "maang"
     case tier1 = "t1"
     case tier2 = "t2"
     case tier3 = "t3"
@@ -138,7 +142,7 @@ enum TierFilter: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .all: return "All tiers"
-        case .faang: return "FAANG+"
+        case .maang: return "MAANG+"
         case .tier1: return "Tier 1"
         case .tier2: return "Tier 2"
         case .tier3: return "Tier 3"
@@ -151,7 +155,7 @@ enum TierFilter: String, CaseIterable, Identifiable {
     var dbValue: String? {
         switch self {
         case .all: return nil
-        case .faang: return "FAANG+"
+        case .maang: return "MAANG+"
         case .tier1: return "Tier 1"
         case .tier2: return "Tier 2"
         case .tier3: return "Tier 3"

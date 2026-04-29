@@ -129,11 +129,10 @@ paginator at the bottom:
 - **Remote menu** — All roles (default) / Remote only. Maps to the
   `is_remote` column. The feed is already US-scoped, so "Remote
   only" = US-workable remote.
-- **Tier menu** — All tiers (default) / FAANG+ / Tier 1 / Tier 2 /
-  Tier 3. Maps to the `tier` column, populated at Supabase-sync
-  time by the backend's tier classifier. Every configured company is
-  classified (10 FAANG+ / 53 Tier 1 / 155 Tier 2 / 204 Tier 3 / 11
-  Startups as of 2026-04-23).
+- **Tier menu** — All tiers (default) / MAANG+ / Tier 1 / Tier 2 /
+  Tier 3 / Startups. Maps to the `tier` column, populated at
+  Supabase-sync time by the backend's tier classifier. Every
+  configured company is classified.
 - **Numbered paginator** (bottom of list) — renders `‹ Prev  1 … 5 6
   [7] 8 9 … 20  Next ›` with always-visible first/last, current
   highlighted, ±2 neighbors, ellipses for gaps. Status line above
