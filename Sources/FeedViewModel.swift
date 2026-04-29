@@ -171,28 +171,48 @@ final class FeedViewModel {
                 query = query.eq("tier", value: tierValue)
             }
 
-            // Sort: `effective_posted_at DESC`, covered by
-            // `idx_jobs_effective_posted_at`. This column is
-            // populated by `supabase_sync._effective_posted_at` as
-            // `posted_at` parsed to TIMESTAMPTZ when the board
-            // exposes one, else `first_seen`. A just-discovered job
-            // (no posted_at) whose first_seen is 5 min ago beats a
+            // Sort: `effective_posted_at` ordered by the user's
+            // SortOrder (newest = DESC, oldest = ASC). Covered by
+            // `idx_jobs_effective_posted_at` in either direction.
+            // The column is populated by
+            // `supabase_sync._effective_posted_at` as `posted_at`
+            // parsed to TIMESTAMPTZ when the board exposes one,
+            // else `first_seen`. A just-discovered job (no
+            // posted_at) with first_seen 5 min ago beats a
             // board-posted job from 1 day ago; among board-dated
-            // jobs, the most recent posting wins. Single-column sort
-            // on a single index — and mirrors the web feed exactly
-            // so users switching between apps see the same top of
-            // feed. Previously compound (`posted_at DESC, last_seen
-            // DESC`), which drifted from the web and fell back to
-            // processing order once the daily cron stamped every
-            // active job with today's last_seen.
+            // jobs, the most recent posting wins.
+            //
+            // Single-column sort on a single index — mirrors the
+            // web feed so users switching between surfaces see the
+            // same top of feed.
             let response = try await query
-                .order("effective_posted_at", ascending: false)
+                .order("effective_posted_at", ascending: filters.sort == .oldest)
                 .range(from: from, to: to)
                 .execute()
 
             if Task.isCancelled { return }
 
-            let decoded: [Job] = try JSONDecoder.supabase.decode([Job].self, from: response.data)
+            var decoded: [Job] = try JSONDecoder.supabase.decode([Job].self, from: response.data)
+
+            // Landing-page diversification: when there are no
+            // filters, no search, default sort, and we're on page
+            // 1, shuffle the top 100 newest with a daily-stable
+            // seed. Stops a single company posting 8 roles in one
+            // batch from monopolizing the top of feed. Pages 2+
+            // skip this branch and resume chronological — no
+            // duplicate rows across pages because we're only
+            // permuting page 1's set, not paging into the shuffled
+            // pool. Mirrors the web's `isBareLanding` check.
+            let isBareLanding = filters.search.isEmpty
+                && filters.posted == .any
+                && filters.remote == .all
+                && filters.tier == .all
+                && filters.sort == .newest
+                && page == 1
+            if isBareLanding {
+                decoded = seededShuffle(decoded, seed: dailySeed())
+            }
+
             let count = response.count ?? decoded.count
             let pages = max(count == 0 ? 0 : 1, (count + pageSize - 1) / pageSize)
 

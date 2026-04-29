@@ -95,6 +95,9 @@ struct FeedView: View {
             .onChange(of: filters.tier) { _, _ in
                 Task { await model.load(filters: filters) }
             }
+            .onChange(of: filters.sort) { _, _ in
+                Task { await model.load(filters: filters) }
+            }
             .task { await model.load(filters: filters) }
             .refreshable { await model.load(filters: filters) }
         }
@@ -114,10 +117,11 @@ struct FeedView: View {
                     DateRangeMenu(selection: $filters.posted)
                     RemoteFilterMenu(selection: $filters.remote)
                     TierFilterMenu(selection: $filters.tier)
+                    SortOrderMenu(selection: $filters.sort)
                     // "Clear filters" is decoupled from the search
                     // field's own clear (the native `.searchable` x).
-                    // Resets only the date/remote/tier dimensions and
-                    // preserves the user's search query — a user
+                    // Resets only the date/remote/tier/sort dimensions
+                    // and preserves the user's search query — a user
                     // often wants to drop the filter set while
                     // keeping the search, or vice versa, and a
                     // single combined Clear conflates the two.
@@ -126,6 +130,7 @@ struct FeedView: View {
                             filters.posted = .any
                             filters.remote = .all
                             filters.tier = .all
+                            filters.sort = .newest
                         }
                         .font(.footnote)
                     }
@@ -272,6 +277,41 @@ private struct TierFilterMenu: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "rosette")
+                Text(selection.label)
+                    .font(.footnote)
+            }
+            .foregroundStyle(.secondary)
+        }
+    }
+}
+
+// MARK: - Sort order menu
+
+/// Sort dropdown — Newest first (default) / Oldest first. Mirrors
+/// the web's `SortFilter`. Picking any value explicitly disables the
+/// landing-page diversification shuffle in `FeedViewModel`.
+private struct SortOrderMenu: View {
+    @Binding var selection: SortOrder
+
+    var body: some View {
+        Menu {
+            ForEach(SortOrder.allCases) { s in
+                Button {
+                    selection = s
+                } label: {
+                    HStack {
+                        Text(s.label)
+                        if selection == s {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: selection == .oldest
+                      ? "arrow.up.arrow.down"
+                      : "arrow.up.arrow.down")
                 Text(selection.label)
                     .font(.footnote)
             }
