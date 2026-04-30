@@ -77,12 +77,17 @@ struct FeedView: View {
                 }
             }
             .onChange(of: searchText) { _, new in
+                let normalized = normalizeSearchInput(new)
+                if normalized != new {
+                    searchText = normalized
+                    return
+                }
                 // Debounce to avoid one query per keystroke.
                 searchTask?.cancel()
                 searchTask = Task {
                     try? await Task.sleep(for: .milliseconds(250))
                     if Task.isCancelled { return }
-                    filters.search = new
+                    filters.search = normalized
                     await model.load(filters: filters)
                 }
             }

@@ -3,12 +3,9 @@ name: CI
 # Runs on every push to main and every PR targeting main.
 # Branch protection on main requires this workflow to pass before merge.
 #
-# Note: this builds the SwiftPM library target (`swift build`), which
-# typechecks every source file under `Sources/` except `JobsApp.swift`
-# (excluded in Package.swift because `@main` requires an app target).
-# The real iOS app build lives in the `.xcodeproj` generated in Xcode
-# and isn't exercised here. That's a known gap — adding it means
-# committing an .xcodeproj, which we haven't done yet.
+# The SwiftPM build gives a fast source typecheck; the Xcode build
+# exercises the real checked-in iOS app target, Info.plist, SPM
+# linkage, and xcconfig wiring without requiring signing secrets.
 
 on:
   push:
@@ -28,3 +25,19 @@ jobs:
 
       - name: Build (library target via SwiftPM)
         run: swift build
+
+      - name: Prepare Xcode config
+        run: cp Config.xcconfig.example Config.xcconfig
+
+      - name: Build (iOS app target via Xcode)
+        run: |
+          xcodebuild \
+            -project jobs-ios.xcodeproj \
+            -scheme jobs-ios \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            ONLY_ACTIVE_ARCH=NO \
+            build

@@ -89,8 +89,11 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build
 ```
 
 The real iOS build still happens through the checked-in
-`jobs-ios.xcodeproj`. Don't delete `Package.swift` — it's useful in CI
-too.
+`jobs-ios.xcodeproj`. Don't delete `Package.swift` — CI runs both the
+fast SwiftPM typecheck and an Xcode app-target build. The CI app build
+copies `Config.xcconfig.example` to `Config.xcconfig`, so it exercises
+the plist/build-setting path without shipping or requiring real
+Supabase credentials.
 
 ## Scope: US / US-remote only
 
@@ -122,7 +125,8 @@ paginator at the bottom:
 
   When the search field is focused with no draft, a `.searchSuggestions`
   panel surfaces the operator vocabulary as discoverability.
-  Whitespace, `,`, and `;` are interchangeable separators.
+  Whitespace, `,`, and `;` are interchangeable separators. Search is
+  capped at 200 characters and 10 parsed atoms, matching the web feed.
 - **Posted-date menu** — Any time (default) / 24h / 7d / 30d. Filters
   on `effective_posted_at`, populated by the backend as board
   `posted_at` when available, else `first_seen`.

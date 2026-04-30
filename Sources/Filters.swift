@@ -34,11 +34,15 @@
 //  (`idx_jobs_title_trgm`, `idx_jobs_company_trgm`, `pg_trgm`) cover
 //  every ILIKE / NOT ILIKE.
 //
-//  The pre-defined keyword chip catalog was removed earlier in favor
-//  of free-text search.
-//
 
 import Foundation
+
+let maxSearchLength = 200
+let maxSearchAtoms = 10
+
+func normalizeSearchInput(_ input: String) -> String {
+    String(input.prefix(maxSearchLength))
+}
 
 enum DateRange: String, CaseIterable, Identifiable {
     case any = "any"
@@ -336,6 +340,7 @@ struct SearchAtom: Equatable {
 /// same algorithm. Output verified bit-identical across the same test
 /// cases (see commit history).
 func parseSearchAtoms(_ input: String) -> [SearchAtom] {
+    let input = normalizeSearchInput(input)
     var seen = Set<String>()
     var out: [SearchAtom] = []
     let chars = Array(input)
@@ -346,7 +351,7 @@ func parseSearchAtoms(_ input: String) -> [SearchAtom] {
         c.isWhitespace || c == "," || c == ";"
     }
 
-    while i < n {
+    while i < n && out.count < maxSearchAtoms {
         // Skip leading separators.
         while i < n && isSep(chars[i]) { i += 1 }
         if i >= n { break }
@@ -426,12 +431,4 @@ func parseSearchAtoms(_ input: String) -> [SearchAtom] {
     }
 
     return out
-}
-
-/// Backward-compat shim — bare keyword strings only (no negation, no
-/// field scope). Callers should consume `parseSearchAtoms` directly.
-func splitSearchTerms(_ input: String) -> [String] {
-    parseSearchAtoms(input)
-        .filter { !$0.negate && $0.scope == .any }
-        .map { $0.value }
 }
