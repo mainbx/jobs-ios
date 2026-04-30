@@ -91,8 +91,7 @@ final class FeedViewModel {
             .from("public_jobs_feed")
             .select(
                 "canonical_key, company, title, posting_url, " +
-                "location, us_or_remote_eligible, is_remote, " +
-                "states, effective_posted_at",
+                "location, is_remote, effective_posted_at",
                 count: includeCount ? .estimated : nil
             )
             .eq("us_or_remote_eligible", value: true)
@@ -223,16 +222,27 @@ extension JSONDecoder {
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             let raw = try container.decode(String.self)
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            if let d = formatter.date(from: raw) { return d }
-            formatter.formatOptions = [.withInternetDateTime]
-            if let d = formatter.date(from: raw) { return d }
+            if let d = SupabaseDateFormatters.fractional.date(from: raw) { return d }
+            if let d = SupabaseDateFormatters.internet.date(from: raw) { return d }
             throw DecodingError.dataCorruptedError(
                 in: container,
                 debugDescription: "Unparseable ISO-8601 date: \(raw)"
             )
         }
         return decoder
+    }()
+}
+
+private enum SupabaseDateFormatters {
+    static let fractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    static let internet: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
     }()
 }

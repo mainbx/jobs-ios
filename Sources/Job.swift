@@ -23,10 +23,8 @@ struct Job: Codable, Identifiable, Hashable {
     let title: String
     let postingUrl: String
     let location: String
-    let usOrRemoteEligible: Bool
-    /// Narrower than `usOrRemoteEligible` — true only when at least one
-    /// fragment actually names a remote-work mode. Drives the green
-    /// "Remote" pill in `FeedView`.
+    /// True only when at least one fragment actually names a remote-work
+    /// mode. Drives the green "Remote" pill in `FeedView`.
     let isRemote: Bool
     /// Backend-computed canonical age timestamp. Parsed `posted_at`
     /// when the board exposed a valid one, else `first_seen`. The
@@ -34,10 +32,6 @@ struct Job: Codable, Identifiable, Hashable {
     /// in `FeedView.swift`) — "posted Nh ago", "posted Nmo ago",
     /// "posted 1y+ ago", or "open since YYYY" for ancient zombie reqs.
     let effectivePostedAt: Date?
-    /// Backend-populated state-filter membership. Contains US state/DC/
-    /// territory codes and optionally "*" for nationwide rows.
-    let states: [String]
-
     /// SwiftUI `Identifiable` — `canonical_key` is already unique.
     var id: String { canonicalKey }
 
@@ -57,9 +51,7 @@ struct Job: Codable, Identifiable, Hashable {
         case canonicalKey = "canonical_key"
         case company, title, location
         case postingUrl = "posting_url"
-        case usOrRemoteEligible = "us_or_remote_eligible"
         case isRemote = "is_remote"
-        case states
         case effectivePostedAt = "effective_posted_at"
     }
 }

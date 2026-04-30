@@ -20,6 +20,7 @@ struct FeedView: View {
     @State private var filters = FilterState()
     @State private var searchText: String = ""
     @State private var searchTask: Task<Void, Never>?
+    @State private var filterTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
@@ -87,27 +88,27 @@ struct FeedView: View {
                 searchTask = Task {
                     try? await Task.sleep(for: .milliseconds(250))
                     if Task.isCancelled { return }
-                    filters.search = normalized
-                    await model.load(filters: filters)
+                    await MainActor.run {
+                        filters.search = normalized
+                    }
                 }
             }
-            .onChange(of: filters.posted) { _, _ in
-                Task { await model.load(filters: filters) }
-            }
-            .onChange(of: filters.remote) { _, _ in
-                Task { await model.load(filters: filters) }
-            }
-            .onChange(of: filters.tier) { _, _ in
-                Task { await model.load(filters: filters) }
-            }
-            .onChange(of: filters.state) { _, _ in
-                Task { await model.load(filters: filters) }
-            }
-            .onChange(of: filters.sort) { _, _ in
-                Task { await model.load(filters: filters) }
+            .onChange(of: filters) { _, new in
+                scheduleFilterLoad(new)
             }
             .task { await model.load(filters: filters) }
-            .refreshable { await model.load(filters: filters) }
+            .refreshable {
+                filterTask?.cancel()
+                await model.load(filters: filters)
+            }
+        }
+    }
+
+    private func scheduleFilterLoad(_ next: FilterState) {
+        filterTask?.cancel()
+        filterTask = Task {
+            if Task.isCancelled { return }
+            await model.load(filters: next)
         }
     }
 
@@ -136,11 +137,13 @@ struct FeedView: View {
                     // single combined Clear conflates the two.
                     if filters.hasNonSearchFilters {
                         Button("Clear filters") {
-                            filters.posted = .any
-                            filters.remote = .all
-                            filters.state = .all
-                            filters.tier = .all
-                            filters.sort = .newest
+                            var next = filters
+                            next.posted = .any
+                            next.remote = .all
+                            next.state = .all
+                            next.tier = .all
+                            next.sort = .newest
+                            filters = next
                         }
                         .font(.footnote)
                     }
