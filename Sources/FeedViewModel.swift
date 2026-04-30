@@ -4,14 +4,14 @@
 //
 //  Fetches a page of the most-recently-seen relevant jobs from
 //  Supabase, optionally narrowed by a `FilterState` (multi-keyword
-//  search + posted-at window + remote + tier filter). The app reads the
+//  search + posted-at window + remote + state + tier filter). The app reads the
 //  narrow `public_jobs_feed` view and still sends the US/remote filter
 //  as a belt-and-braces guard.
 //
 //  Pagination is numbered — each load replaces the list and jumps to
 //  the requested page. Total-row count comes from PostgREST's
-//  Content-Range header via `PostgrestResponse.count`, which the
-//  `count: .exact` option on `.select` opts us into.
+//  Content-Range header via `PostgrestResponse.count`, using
+//  `count: .estimated` to avoid slow exact COUNT(*) scans.
 //
 
 import Foundation
@@ -19,6 +19,11 @@ import Supabase
 
 /// 100-row pages, matching the web app.
 private let pageSize = 100
+
+private struct FeedPageResult {
+    let jobs: [Job]
+    let totalCount: Int
+}
 
 @Observable
 @MainActor
@@ -75,127 +80,98 @@ final class FeedViewModel {
         await task.value
     }
 
+    private func fetchPage(filters: FilterState, page: Int, includeCount: Bool) async throws -> FeedPageResult {
+        let from = (page - 1) * pageSize
+        let to = from + pageSize - 1 // inclusive range
+
+        // US-only by design (matches the supabase_sync filter that
+        // drops non-US rows from the Supabase mirror). The explicit
+        // filter here is belt-and-braces.
+        var query = SupabaseAPI.client
+            .from("public_jobs_feed")
+            .select(
+                "canonical_key, company, title, posting_url, " +
+                "location, us_or_remote_eligible, is_remote, " +
+                "states, effective_posted_at",
+                count: includeCount ? .estimated : nil
+            )
+            .eq("us_or_remote_eligible", value: true)
+
+        for atom in parseSearchAtoms(filters.search) {
+            let pat = "*\(atom.value)*"
+            if atom.negate {
+                switch atom.scope {
+                case .any:
+                    query = query
+                        .filter("title", operator: "not.ilike", value: pat)
+                        .filter("company", operator: "not.ilike", value: pat)
+                case .title:
+                    query = query.filter("title", operator: "not.ilike", value: pat)
+                case .company:
+                    query = query.filter("company", operator: "not.ilike", value: pat)
+                }
+            } else {
+                switch atom.scope {
+                case .any:
+                    query = query.or("title.ilike.\(pat),company.ilike.\(pat)")
+                case .title:
+                    query = query.ilike("title", pattern: pat)
+                case .company:
+                    query = query.ilike("company", pattern: pat)
+                }
+            }
+        }
+
+        if let floorISO = filters.posted.floorISO {
+            query = query.gte("effective_posted_at", value: floorISO)
+        }
+
+        switch filters.remote {
+        case .all:
+            break
+        case .remote:
+            query = query.eq("is_remote", value: true)
+        }
+
+        if let tierValue = filters.tier.dbValue {
+            query = query.eq("tier", value: tierValue)
+        }
+
+        if let stateValue = filters.state.dbValue {
+            query = query.overlaps("states", value: [stateValue, "*"])
+        }
+
+        let response = try await query
+            .order("effective_posted_at", ascending: filters.sort == .oldest)
+            .range(from: from, to: to)
+            .execute()
+
+        let decoded: [Job] = try JSONDecoder.supabase.decode([Job].self, from: response.data)
+        let count = response.count ?? (decoded.count + (decoded.count == pageSize ? 1 : 0))
+        return FeedPageResult(jobs: decoded, totalCount: count)
+    }
+
     private func performLoad(filters: FilterState, page: Int) async {
         isLoading = true
         defer { isLoading = false }
         errorMessage = nil
 
-        let from = (page - 1) * pageSize
-        let to = from + pageSize - 1 // inclusive range
-
         do {
-            // US-only by design (matches the supabase_sync filter that
-            // drops non-US rows from the Supabase mirror). The explicit
-            // filter here is belt-and-braces.
-            //
-            // `count: .exact` asks PostgREST to return the total row
-            // count in the Content-Range response header; we read it
-            // via `response.count`.
-            var query = SupabaseAPI.client
-                .from("public_jobs_feed")
-                .select(
-                    "canonical_key, company, title, posting_url, " +
-                    "location, us_or_remote_eligible, is_remote, " +
-                    "effective_posted_at",
-                    count: .exact
-                )
-                .eq("us_or_remote_eligible", value: true)
-
-            // Google-style free-text search. `parseSearchAtoms` turns
-            // the raw input into a structured atom list: bare keywords,
-            // quoted phrases, negation (`-`), and field constraints
-            // (`title:` / `company:`). Each atom becomes one or two
-            // PostgREST filters; supabase-swift + PostgREST joins
-            // repeated request params with AND, so we never construct
-            // nested `and(or(...))` URL syntax by hand.
-            //
-            // Per-atom wire shape (`*` = ILIKE wildcard in URL form):
-            //   +any  v   →  or=(title.ilike.*v*,company.ilike.*v*)
-            //   +tit  v   →  title=ilike.*v*    (raw filter via .or)
-            //   +cmp  v   →  company=ilike.*v*  (raw filter via .or)
-            //   -any  v   →  title=not.ilike.*v* AND company=not.ilike.*v*
-            //                (de Morgan: NOT(A OR B) = NOT A AND NOT B)
-            //   -tit  v   →  title=not.ilike.*v*
-            //   -cmp  v   →  company=not.ilike.*v*
-            //
-            // Trigram indexes (`idx_jobs_title_trgm`,
-            // `idx_jobs_company_trgm`, `pg_trgm`) cover every ILIKE /
-            // NOT ILIKE. Mirrors the web exactly.
-            for atom in parseSearchAtoms(filters.search) {
-                let pat = "*\(atom.value)*"
-                if atom.negate {
-                    switch atom.scope {
-                    case .any:
-                        query = query
-                            .filter("title", operator: "not.ilike", value: pat)
-                            .filter("company", operator: "not.ilike", value: pat)
-                    case .title:
-                        query = query.filter("title", operator: "not.ilike", value: pat)
-                    case .company:
-                        query = query.filter("company", operator: "not.ilike", value: pat)
-                    }
-                } else {
-                    switch atom.scope {
-                    case .any:
-                        query = query.or("title.ilike.\(pat),company.ilike.\(pat)")
-                    case .title:
-                        query = query.ilike("title", pattern: pat)
-                    case .company:
-                        query = query.ilike("company", pattern: pat)
-                    }
-                }
+            let result: FeedPageResult
+            do {
+                result = try await fetchPage(filters: filters, page: page, includeCount: true)
+            } catch {
+                if Task.isCancelled { return }
+                print("[feed] counted query error, retrying without count:", error)
+                result = try await fetchPage(filters: filters, page: page, includeCount: false)
             }
-
-            // Date range: filter on the precomputed
-            // `effective_posted_at` column (populated by
-            // `supabase_sync` as `posted_at` parsed to TIMESTAMPTZ
-            // when known, else `first_seen`). Single indexed range
-            // scan — dodges the 3s anon statement timeout we hit
-            // with the compound OR across posted_at (TEXT) and
-            // first_seen (TIMESTAMPTZ). Mirrors the web.
-            if let floorISO = filters.posted.floorISO {
-                query = query.gte("effective_posted_at", value: floorISO)
-            }
-
-            // Remote filter — two-state. `.all` leaves it off.
-            switch filters.remote {
-            case .all:
-                break
-            case .remote:
-                query = query.eq("is_remote", value: true)
-            }
-
-            // Tier filter — five-state. `.all` leaves it off.
-            if let tierValue = filters.tier.dbValue {
-                query = query.eq("tier", value: tierValue)
-            }
-
-            // Sort: `effective_posted_at` ordered by the user's
-            // SortOrder (newest = DESC, oldest = ASC). Covered by
-            // `idx_jobs_effective_posted_at` in either direction.
-            // The column is populated by
-            // `supabase_sync._effective_posted_at` as `posted_at`
-            // parsed to TIMESTAMPTZ when the board exposes one,
-            // else `first_seen`. A just-discovered job (no
-            // posted_at) with first_seen 5 min ago beats a
-            // board-posted job from 1 day ago; among board-dated
-            // jobs, the most recent posting wins.
-            //
-            // Single-column sort on a single index — mirrors the
-            // web feed so users switching between surfaces see the
-            // same top of feed.
-            let response = try await query
-                .order("effective_posted_at", ascending: filters.sort == .oldest)
-                .range(from: from, to: to)
-                .execute()
 
             if Task.isCancelled { return }
 
-            let decoded: [Job] = try JSONDecoder.supabase.decode([Job].self, from: response.data)
-            let count = response.count ?? decoded.count
+            let count = result.totalCount
             let pages = max(count == 0 ? 0 : 1, (count + pageSize - 1) / pageSize)
 
-            self.jobs = decoded
+            self.jobs = result.jobs
             self.totalCount = count
             self.totalPages = pages
             self.currentPage = page

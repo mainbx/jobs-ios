@@ -3,7 +3,7 @@
 //  jobs-ios
 //
 //  Entry screen. Scrollable list of open roles, newest first, with
-//  multi-keyword search + date-range + remote + tier filters stacked
+//  multi-keyword search + date-range + remote + state + tier filters stacked
 //  above the list. The bottom of the list shows a numbered paginator —
 //  first page, last page, current ± 2, ellipses for gaps — plus Prev
 //  / Next arrows. Mirrors the web's Pagination component exactly.
@@ -95,6 +95,9 @@ struct FeedView: View {
             .onChange(of: filters.tier) { _, _ in
                 Task { await model.load(filters: filters) }
             }
+            .onChange(of: filters.state) { _, _ in
+                Task { await model.load(filters: filters) }
+            }
             .onChange(of: filters.sort) { _, _ in
                 Task { await model.load(filters: filters) }
             }
@@ -107,7 +110,7 @@ struct FeedView: View {
 
     private var filterStack: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Filter bar with date / remote / tier menus and a Clear
+            // Filter bar with date / remote / state / tier menus and a Clear
             // button. Free-text search lives in the navigation
             // ``.searchable`` slot above; whitespace, commas, and
             // semicolons are all separators, and every term must hit
@@ -116,11 +119,12 @@ struct FeedView: View {
                 HStack(spacing: 16) {
                     DateRangeMenu(selection: $filters.posted)
                     RemoteFilterMenu(selection: $filters.remote)
+                    StateFilterMenu(selection: $filters.state)
                     TierFilterMenu(selection: $filters.tier)
                     SortOrderMenu(selection: $filters.sort)
                     // "Clear filters" is decoupled from the search
                     // field's own clear (the native `.searchable` x).
-                    // Resets only the date/remote/tier/sort dimensions
+                    // Resets only the date/remote/state/tier/sort dimensions
                     // and preserves the user's search query — a user
                     // often wants to drop the filter set while
                     // keeping the search, or vice versa, and a
@@ -129,6 +133,7 @@ struct FeedView: View {
                         Button("Clear filters") {
                             filters.posted = .any
                             filters.remote = .all
+                            filters.state = .all
                             filters.tier = .all
                             filters.sort = .newest
                         }
@@ -248,6 +253,36 @@ private struct RemoteFilterMenu: View {
             HStack(spacing: 4) {
                 Image(systemName: selection == .remote ? "house" : "globe.americas")
                 Text(selection.label)
+                    .font(.footnote)
+            }
+            .foregroundStyle(.secondary)
+        }
+    }
+}
+
+// MARK: - State filter menu
+
+private struct StateFilterMenu: View {
+    @Binding var selection: StateFilter
+
+    var body: some View {
+        Menu {
+            ForEach(StateFilter.allCases) { s in
+                Button {
+                    selection = s
+                } label: {
+                    HStack {
+                        Text(s.label)
+                        if selection == s {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "map")
+                Text("State: \(selection.label)")
                     .font(.footnote)
             }
             .foregroundStyle(.secondary)

@@ -25,6 +25,7 @@
 //    when known, else `first_seen`).
 //  - `RemoteFilter` maps to the `is_remote` column.
 //  - `TierFilter` maps to the `tier` column populated at sync time.
+//  - `StateFilter` maps to the backend-populated `states` array.
 //
 //  Wire shape: `parseSearchAtoms` returns a list of `SearchAtom`s.
 //  Each atom becomes one or two PostgREST filters (see the type doc).
@@ -164,6 +165,92 @@ enum TierFilter: String, CaseIterable, Identifiable {
     }
 }
 
+/// US state / DC / territory filter. `.all` leaves it off. Concrete
+/// values overlap the backend `states` text array with `[code, "*"]`
+/// so nationwide rows appear under every state filter.
+enum StateFilter: String, CaseIterable, Identifiable {
+    case all = "all"
+    case al = "AL", ak = "AK", az = "AZ", ar = "AR", ca = "CA"
+    case co = "CO", ct = "CT", de = "DE", fl = "FL", ga = "GA"
+    case hi = "HI", id = "ID", il = "IL", indiana = "IN", ia = "IA"
+    case ks = "KS", ky = "KY", la = "LA", me = "ME", md = "MD"
+    case ma = "MA", mi = "MI", mn = "MN", ms = "MS", mo = "MO"
+    case mt = "MT", ne = "NE", nv = "NV", nh = "NH", nj = "NJ"
+    case nm = "NM", ny = "NY", nc = "NC", nd = "ND", oh = "OH"
+    case ok = "OK", oregon = "OR", pa = "PA", ri = "RI", sc = "SC"
+    case sd = "SD", tn = "TN", tx = "TX", ut = "UT", vt = "VT"
+    case va = "VA", wa = "WA", wv = "WV", wi = "WI", wy = "WY"
+    case dc = "DC", pr = "PR", vi = "VI", gu = "GU", mp = "MP", americanSamoa = "AS"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: return "All states"
+        case .al: return "Alabama"
+        case .ak: return "Alaska"
+        case .az: return "Arizona"
+        case .ar: return "Arkansas"
+        case .ca: return "California"
+        case .co: return "Colorado"
+        case .ct: return "Connecticut"
+        case .de: return "Delaware"
+        case .fl: return "Florida"
+        case .ga: return "Georgia"
+        case .hi: return "Hawaii"
+        case .id: return "Idaho"
+        case .il: return "Illinois"
+        case .indiana: return "Indiana"
+        case .ia: return "Iowa"
+        case .ks: return "Kansas"
+        case .ky: return "Kentucky"
+        case .la: return "Louisiana"
+        case .me: return "Maine"
+        case .md: return "Maryland"
+        case .ma: return "Massachusetts"
+        case .mi: return "Michigan"
+        case .mn: return "Minnesota"
+        case .ms: return "Mississippi"
+        case .mo: return "Missouri"
+        case .mt: return "Montana"
+        case .ne: return "Nebraska"
+        case .nv: return "Nevada"
+        case .nh: return "New Hampshire"
+        case .nj: return "New Jersey"
+        case .nm: return "New Mexico"
+        case .ny: return "New York"
+        case .nc: return "North Carolina"
+        case .nd: return "North Dakota"
+        case .oh: return "Ohio"
+        case .ok: return "Oklahoma"
+        case .oregon: return "Oregon"
+        case .pa: return "Pennsylvania"
+        case .ri: return "Rhode Island"
+        case .sc: return "South Carolina"
+        case .sd: return "South Dakota"
+        case .tn: return "Tennessee"
+        case .tx: return "Texas"
+        case .ut: return "Utah"
+        case .vt: return "Vermont"
+        case .va: return "Virginia"
+        case .wa: return "Washington"
+        case .wv: return "West Virginia"
+        case .wi: return "Wisconsin"
+        case .wy: return "Wyoming"
+        case .dc: return "Washington, D.C."
+        case .pr: return "Puerto Rico"
+        case .vi: return "U.S. Virgin Islands"
+        case .gu: return "Guam"
+        case .mp: return "Northern Mariana Islands"
+        case .americanSamoa: return "American Samoa"
+        }
+    }
+
+    var dbValue: String? {
+        self == .all ? nil : rawValue
+    }
+}
+
 /// Snapshot of every filter the user has active. Passed to the view
 /// model's `load(filters:)`.
 struct FilterState: Equatable {
@@ -171,6 +258,7 @@ struct FilterState: Equatable {
     var posted: DateRange = .any
     var remote: RemoteFilter = .all
     var tier: TierFilter = .all
+    var state: StateFilter = .all
     var sort: SortOrder = .newest
 
     /// `true` iff every dimension (including search) is at its default
@@ -183,7 +271,7 @@ struct FilterState: Equatable {
     /// constraint, ignoring search. Drives the "Clear filters" button
     /// — keeping it decoupled from the search field's own clear.
     var hasNonSearchFilters: Bool {
-        posted != .any || remote != .all || tier != .all || sort != .newest
+        posted != .any || remote != .all || tier != .all || state != .all || sort != .newest
     }
 }
 

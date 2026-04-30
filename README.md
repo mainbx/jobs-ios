@@ -3,15 +3,15 @@
 iOS app for the job aggregator. Reads from a Supabase project that the
 backend pipeline writes to. Shares no code with the web frontend —
 SwiftUI and Next.js don't mix — but both read from identical
-RLS-scoped tables.
+public Supabase views.
 
 ## Architecture
 
 ```
 backend pipeline             Supabase                       jobs-ios
 ─────────────────            ──────────                     ────────
-scrape + SQLite ──push──► public.jobs (RLS) ──anon key──► SwiftUI app
-                           public.scrape_runs_latest        (iOS 17+)
+scrape + SQLite ──push──► public.jobs (RLS) ──view/anon──► SwiftUI app
+                           public_scrape_health             (iOS 17+)
 ```
 
 The backend scraper + sync pipeline live in a separate private
@@ -63,8 +63,8 @@ Sources/
 ├── JobsApp.swift           # SwiftUI @main entry point
 ├── FeedView.swift          # Scrollable list + search field + filter bar
 ├── FeedViewModel.swift     # @Observable model, async load + filter state
-├── Filters.swift           # Search tokenizer + DateRange enum + FilterState
-├── Job.swift               # Codable row type mirroring public.jobs
+├── Filters.swift           # Search tokenizer + feed filter state
+├── Job.swift               # Codable row type mirroring public_jobs_feed
 └── SupabaseClient.swift    # Singleton SupabaseClient wired from Info.plist
 Info.plist                  # App metadata + Supabase build-setting bridge
 Package.swift               # Typecheck-only SPM manifest (see below)
@@ -104,7 +104,7 @@ rows; the iOS query also includes
 
 ## Filter UI
 
-Four filters are surfaced at the top of the feed, plus a numbered
+Five filters are surfaced at the top of the feed, plus a numbered
 paginator at the bottom:
 
 - **Search** (native SwiftUI `.searchable`) — Google-style free
@@ -129,6 +129,9 @@ paginator at the bottom:
 - **Remote menu** — All roles (default) / Remote only. Maps to the
   `is_remote` column. The feed is already US-scoped, so "Remote
   only" = US-workable remote.
+- **State menu** — All states (default) / one US state, DC, or
+  territory. Maps to the backend-populated `states` array and also
+  matches rows tagged `*` for nationwide / unspecified-US postings.
 - **Tier menu** — All tiers (default) / MAANG+ / Tier 1 / Tier 2 /
   Tier 3 / Startups. Maps to the `tier` column, populated at
   Supabase-sync time by the backend's tier classifier. Every
@@ -137,8 +140,9 @@ paginator at the bottom:
   [7] 8 9 … 20  Next ›` with always-visible first/last, current
   highlighted, ±2 neighbors, ellipses for gaps. Status line above
   shows "Showing 101–200 of 5,432 · Page 2 of 55". Total counts come
-  from Supabase's `count: .exact` (read from the `Content-Range`
-  response header). Tapping any number jumps directly to that page.
+  from Supabase's `count: .estimated` (read from the `Content-Range`
+  response header), with a no-count retry if the counted query fails.
+  Tapping any number jumps directly to that page.
 
 State lives in `FilterState` inside `FeedView`; current page lives in
 `FeedViewModel` (not a URL-backed state since iOS has no URL). The
@@ -167,9 +171,9 @@ Config.xcconfig isn't being picked up by the build. Check:
   local project drifted; re-check out from `main`.
 
 **App launches but shows "Couldn't load jobs"**
-Either the RLS policy `jobs_public_read` is missing (check Supabase
-SQL editor against the backend's schema), or the publishable key is
-wrong (regenerate from Dashboard → Settings → API).
+Either the public views (`public_jobs_feed`, `public_scrape_health`) are
+missing/stale (check Supabase SQL editor against the backend's schema),
+or the publishable key is wrong (regenerate from Dashboard → Settings → API).
 
 **App Transport Security error**
 Supabase URLs are HTTPS-only — ATS is not the issue. Check that

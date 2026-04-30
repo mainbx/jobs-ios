@@ -34,6 +34,9 @@ struct Job: Codable, Identifiable, Hashable {
     /// in `FeedView.swift`) — "posted Nh ago", "posted Nmo ago",
     /// "posted 1y+ ago", or "open since YYYY" for ancient zombie reqs.
     let effectivePostedAt: Date?
+    /// Backend-populated state-filter membership. Contains US state/DC/
+    /// territory codes and optionally "*" for nationwide rows.
+    let states: [String]
 
     /// SwiftUI `Identifiable` — `canonical_key` is already unique.
     var id: String { canonicalKey }
@@ -42,8 +45,8 @@ struct Job: Codable, Identifiable, Hashable {
         guard
             let url = URL(string: postingUrl),
             let scheme = url.scheme?.lowercased(),
-            (scheme == "http" || scheme == "https"),
-            url.host != nil
+            ((scheme == "http" || scheme == "https") && url.host != nil)
+                || (scheme == "mailto" && postingUrl.contains("@"))
         else {
             return nil
         }
@@ -56,6 +59,7 @@ struct Job: Codable, Identifiable, Hashable {
         case postingUrl = "posting_url"
         case usOrRemoteEligible = "us_or_remote_eligible"
         case isRemote = "is_remote"
+        case states
         case effectivePostedAt = "effective_posted_at"
     }
 }
