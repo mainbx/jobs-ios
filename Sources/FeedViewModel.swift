@@ -156,7 +156,7 @@ final class FeedViewModel {
         errorMessage = nil
 
         do {
-            let result: FeedPageResult
+            var result: FeedPageResult
             do {
                 result = try await fetchPage(filters: filters, page: page, includeCount: true)
             } catch {
@@ -167,18 +167,120 @@ final class FeedViewModel {
 
             if Task.isCancelled { return }
 
+            // Estimated-count over-shoot guard. PostgREST's
+            // `count: .estimated` reads the planner's reltuples and can
+            // be a few percent ahead of the real row count, especially
+            // right after a scrape+sync. With ~79k feed rows even 1 %
+            // drift = ~8 phantom pages — tapping the paginator's last
+            // button could land the user on an empty page. When that
+            // happens, retry with `count: .exact` to find the real
+            // last page and re-fetch from there so the user always
+            // sees real data instead of an empty list.
+            //
+            // Mirrors jobs-web 041b4c5; same guard rails:
+            //   - jobs.isEmpty
+            //   - page > 1 (page 1 empty is genuine "no results")
+            //   - exact count succeeded AND > 0 AND page > realLastPage
+            //
+            // If the exact count itself errors (8s anon-statement
+            // timeout under index rebuild), fall through to whatever
+            // the empty page rendered — same belt-and-braces failure
+            // mode as the rest of this file.
+            var loadedPage = page
+            if result.jobs.isEmpty && page > 1 {
+                let exact = await fetchExactCount(filters: filters)
+                if let exact, exact > 0 {
+                    let realLast = max(1, (exact + pageSize - 1) / pageSize)
+                    if page > realLast {
+                        if Task.isCancelled { return }
+                        do {
+                            result = try await fetchPage(filters: filters, page: realLast, includeCount: true)
+                            loadedPage = realLast
+                        } catch {
+                            print("[feed] last-page refetch error:", error)
+                        }
+                    }
+                }
+            }
+
+            if Task.isCancelled { return }
+
             let count = result.totalCount
             let pages = max(count == 0 ? 0 : 1, (count + pageSize - 1) / pageSize)
 
             self.jobs = result.jobs
             self.totalCount = count
             self.totalPages = pages
-            self.currentPage = page
+            self.currentPage = loadedPage
             self.lastFilters = filters
         } catch {
             if Task.isCancelled { return }
             self.errorMessage = error.localizedDescription
             print("[feed] error:", error)
+        }
+    }
+
+    /// One-shot exact COUNT(*) with the same filter set, no rows
+    /// returned. Slow-path fallback used only when the user has landed
+    /// on an empty page beyond page 1 — meaning the planner's
+    /// `count: .estimated` over-shot and the paginator advertised a
+    /// page that has no data behind it. Returns `nil` if the exact
+    /// query also errors so the caller falls through gracefully
+    /// rather than redirecting blind.
+    private func fetchExactCount(filters: FilterState) async -> Int? {
+        do {
+            var query = SupabaseAPI.client
+                .from("public_jobs_feed")
+                .select(
+                    "canonical_key",  // any column works; head:true returns no rows anyway
+                    head: true,
+                    count: .exact
+                )
+                .eq("us_or_remote_eligible", value: true)
+
+            for atom in parseSearchAtoms(filters.search) {
+                let pat = "*\(atom.value)*"
+                if atom.negate {
+                    switch atom.scope {
+                    case .any:
+                        query = query
+                            .filter("title", operator: "not.ilike", value: pat)
+                            .filter("company", operator: "not.ilike", value: pat)
+                    case .title:
+                        query = query.filter("title", operator: "not.ilike", value: pat)
+                    case .company:
+                        query = query.filter("company", operator: "not.ilike", value: pat)
+                    }
+                } else {
+                    switch atom.scope {
+                    case .any:
+                        query = query.or("title.ilike.\(pat),company.ilike.\(pat)")
+                    case .title:
+                        query = query.ilike("title", pattern: pat)
+                    case .company:
+                        query = query.ilike("company", pattern: pat)
+                    }
+                }
+            }
+
+            if let floorISO = filters.posted.floorISO {
+                query = query.gte("effective_posted_at", value: floorISO)
+            }
+            if filters.remote == .remote {
+                query = query.eq("is_remote", value: true)
+            }
+            if let tierValue = filters.tier.dbValue {
+                query = query.eq("tier", value: tierValue)
+            }
+            if let stateValue = filters.state.dbValue {
+                query = query.overlaps("states", value: [stateValue, "*"])
+            }
+
+            let response = try await query.execute()
+            return response.count
+        } catch {
+            print("[feed] exact-count error:", error)
+            return nil
         }
     }
 }
