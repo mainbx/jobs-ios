@@ -115,63 +115,73 @@ struct FeedView: View {
     // MARK: - Filter UI
 
     private var filterStack: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Filter bar with date / remote / state / tier / sort menus
-            // and a Clear button. Free-text search lives in the
-            // navigation ``.searchable`` slot above; whitespace, commas,
-            // and semicolons are all separators, and every term must hit
-            // either the title or the company (Google-style AND).
-            //
-            // The chip styling mirrors the web revamp — outlined pill
-            // for idle, solid fill for active, with the active value
-            // baked into the label (`Posted · 7d`). Tighter spacing
-            // keeps all 5 chips visible at iPhone widths without
-            // forcing horizontal scroll on idle.
+        // Two-zone filter row, mirroring the web revamp at jobs-web
+        // commit 041152f:
+        //
+        //   [Posted][Remote][State][Tier] ←scrollable→  ‖  [×Clear][↕Sort]
+        //
+        //   ^-- left zone, takes remaining space   --^      ^- right zone, pinned -^
+        //
+        // The left zone scrolls horizontally on narrow viewports
+        // without affecting the right cluster. The right zone is
+        // pinned to the row's trailing edge — sort toggle is always
+        // one tap away no matter how far the chip row has scrolled,
+        // and Clear (when filters are active) sits just to its left.
+        //
+        // Sort is intentionally NOT one of the dimensions Clear
+        // resets, and toggling sort doesn't surface Clear — sort is
+        // a *view* preference, not a result-narrowing filter.
+        HStack(spacing: 4) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     DateRangeMenu(selection: $filters.posted)
                     RemoteFilterMenu(selection: $filters.remote)
                     StateFilterMenu(selection: $filters.state)
                     TierFilterMenu(selection: $filters.tier)
-                    SortOrderToggle(selection: $filters.sort)
-                    // "Clear filters" is decoupled from the search
-                    // field's own clear (the native `.searchable` x).
-                    // Resets only the date/remote/state/tier/sort dimensions
-                    // and preserves the user's search query — a user
-                    // often wants to drop the filter set while
-                    // keeping the search, or vice versa, and a
-                    // single combined Clear conflates the two.
-                    //
-                    // Compact icon + label, matching the chip aesthetic
-                    // without using the same active-fill styling (Clear
-                    // is an action, not a filter dimension).
-                    if filters.hasNonSearchFilters {
-                        Button {
-                            var next = filters
-                            next.posted = .any
-                            next.remote = .all
-                            next.state = .all
-                            next.tier = .all
-                            next.sort = .newest
-                            filters = next
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 10, weight: .semibold))
-                                Text("Clear")
-                            }
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .contentShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Clear filters")
-                    }
                 }
-                .padding(.horizontal)
+                .padding(.leading)
             }
+            // Right cluster — Clear (when filters are active) +
+            // pinned Sort toggle. Compact icon-and-label Clear
+            // matches the chip aesthetic without using the same
+            // active-fill styling (Clear is an action, not a filter
+            // dimension). ``.layoutPriority(1)`` keeps the cluster
+            // intact when the chip row tries to claim more width.
+            HStack(spacing: 4) {
+                if filters.hasNonSearchFilters {
+                    Button {
+                        // Reset filters but keep the user's search
+                        // query AND their sort direction — both are
+                        // independent of the result-narrowing filter
+                        // set. A user who flipped to "Oldest first"
+                        // then narrowed by Posted=7d should be able
+                        // to drop the date filter while keeping the
+                        // oldest-first ordering.
+                        var next = filters
+                        next.posted = .any
+                        next.remote = .all
+                        next.state = .all
+                        next.tier = .all
+                        filters = next
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10, weight: .semibold))
+                            Text("Clear")
+                        }
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear filters")
+                }
+                SortOrderToggle(selection: $filters.sort)
+            }
+            .padding(.trailing)
+            .layoutPriority(1)
         }
         .padding(.vertical, 8)
         .background(.regularMaterial)

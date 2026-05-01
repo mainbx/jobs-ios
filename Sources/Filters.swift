@@ -268,14 +268,20 @@ struct FilterState: Equatable {
     /// `true` iff every dimension (including search) is at its default
     /// — the only time the *whole* feed is unfiltered.
     var isEmpty: Bool {
-        search.isEmpty && !hasNonSearchFilters
+        search.isEmpty && sort == .newest && !hasNonSearchFilters
     }
 
-    /// `true` iff date / remote / tier / sort have any active
-    /// constraint, ignoring search. Drives the "Clear filters" button
-    /// — keeping it decoupled from the search field's own clear.
+    /// `true` iff date / remote / tier / state have any active
+    /// constraint. Drives the "Clear filters" button.
+    ///
+    /// Intentionally excludes `search` (the native `.searchable` field
+    /// has its own clear) AND `sort` (a view preference, not a
+    /// result-narrowing filter — same separation Linear / GitHub /
+    /// Stripe Atlas use). Toggling sort therefore doesn't surface the
+    /// Clear button, and clicking Clear leaves the user's sort
+    /// direction alone.
     var hasNonSearchFilters: Bool {
-        posted != .any || remote != .all || tier != .all || state != .all || sort != .newest
+        posted != .any || remote != .all || tier != .all || state != .all
     }
 }
 

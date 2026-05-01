@@ -107,8 +107,8 @@ rows; the iOS query also includes
 
 ## Filter UI
 
-Five filters are surfaced at the top of the feed, plus a numbered
-paginator at the bottom:
+Four filter chips + a pinned sort toggle at the top of the feed,
+plus a numbered paginator at the bottom:
 
 - **Search** (native SwiftUI `.searchable`) — Google-style free
   text, debounced 250 ms. The same grammar as the web feed (see
@@ -127,31 +127,36 @@ paginator at the bottom:
   panel surfaces the operator vocabulary as discoverability.
   Whitespace, `,`, and `;` are interchangeable separators. Search is
   capped at 200 characters and 10 parsed atoms, matching the web feed.
-- **Posted-date menu** — Any time (default) / 24h / 7d / 30d. Filters
-  on `effective_posted_at`, populated by the backend as board
-  `posted_at` when available, else `first_seen`.
-- **Remote menu** — All roles (default) / Remote only. Maps to the
-  `is_remote` column. The feed is already US-scoped, so "Remote
-  only" = US-workable remote.
-- **State menu** — All states (default) / one US state, DC, or
-  territory. Maps to the backend-populated `states` array and also
-  matches rows tagged `*` for nationwide / unspecified-US postings.
-- **Tier menu** — All tiers (default) / MAANG+ / Tier 1 / Tier 2 /
-  Tier 3 / Startups. Maps to the `tier` column, populated at
-  Supabase-sync time by the backend's tier classifier. Every
-  configured company is classified.
+- **Filter chips** — Posted / Remote / State / Tier. Each is a
+  pill-shaped `Menu` whose label flips to a solid-fill active style
+  when the user narrows it (e.g. `Posted · 7d`); same idiom as the
+  web frontend's [`FilterChip.tsx`](https://github.com/mainbx/jobs-web/blob/main/src/components/FilterChip.tsx).
+  Native `Menu` keeps the iOS picker UX (wheel picker for 56-entry
+  State, native checkmarks, free Dynamic Type + VoiceOver). Each
+  picker is backed by an enum in `Sources/Filters.swift`.
+- **Sort toggle** — pinned to the trailing edge of the filter row.
+  Two stacked chevrons; the chevron matching the current sort is at
+  full opacity, the other dims to 40%. One tap flips between
+  `.newest` and `.oldest`. Sort is intentionally **not** treated as
+  a filter — toggling it doesn't surface the Clear button, and
+  tapping Clear preserves the user's sort direction.
+- **Clear button** — appears in the trailing cluster (just before
+  the sort toggle) when any of Posted / Remote / State / Tier is
+  active. Resets those four; leaves search and sort alone.
 - **Numbered paginator** (bottom of list) — renders `‹ Prev  1 … 5 6
   [7] 8 9 … 20  Next ›` with always-visible first/last, current
   highlighted, ±2 neighbors, ellipses for gaps. Status line above
   shows "Showing 101–200 of 5,432 · Page 2 of 55". Total counts come
   from Supabase's `count: .estimated` (read from the `Content-Range`
   response header), with a no-count retry if the counted query fails.
-  Tapping any number jumps directly to that page.
+  Tapping any number jumps directly to that page. Page buttons share
+  the capsule aesthetic of the chips.
 
 State lives in `FilterState` inside `FeedView`; current page lives in
 `FeedViewModel` (not a URL-backed state since iOS has no URL). The
 VM's `load(filters:)` debounces + cancels in-flight requests so rapid
-toggles don't race. Changing any filter resets pagination to page 1.
+toggles don't race. Changing any filter (or the sort direction) resets
+pagination to page 1.
 
 ## What's intentionally NOT built yet (phase 2)
 
