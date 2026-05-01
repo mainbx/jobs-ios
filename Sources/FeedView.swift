@@ -116,13 +116,19 @@ struct FeedView: View {
 
     private var filterStack: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Filter bar with date / remote / state / tier menus and a Clear
-            // button. Free-text search lives in the navigation
-            // ``.searchable`` slot above; whitespace, commas, and
-            // semicolons are all separators, and every term must hit
+            // Filter bar with date / remote / state / tier / sort menus
+            // and a Clear button. Free-text search lives in the
+            // navigation ``.searchable`` slot above; whitespace, commas,
+            // and semicolons are all separators, and every term must hit
             // either the title or the company (Google-style AND).
+            //
+            // The chip styling mirrors the web revamp — outlined pill
+            // for idle, solid fill for active, with the active value
+            // baked into the label (`Posted · 7d`). Tighter spacing
+            // keeps all 5 chips visible at iPhone widths without
+            // forcing horizontal scroll on idle.
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 16) {
+                HStack(spacing: 8) {
                     DateRangeMenu(selection: $filters.posted)
                     RemoteFilterMenu(selection: $filters.remote)
                     StateFilterMenu(selection: $filters.state)
@@ -135,8 +141,12 @@ struct FeedView: View {
                     // often wants to drop the filter set while
                     // keeping the search, or vice versa, and a
                     // single combined Clear conflates the two.
+                    //
+                    // Compact icon + label, matching the chip aesthetic
+                    // without using the same active-fill styling (Clear
+                    // is an action, not a filter dimension).
                     if filters.hasNonSearchFilters {
-                        Button("Clear filters") {
+                        Button {
                             var next = filters
                             next.posted = .any
                             next.remote = .all
@@ -144,8 +154,20 @@ struct FeedView: View {
                             next.tier = .all
                             next.sort = .newest
                             filters = next
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 10, weight: .semibold))
+                                Text("Clear")
+                            }
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .contentShape(Capsule())
                         }
-                        .font(.footnote)
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Clear filters")
                     }
                 }
                 .padding(.horizontal)
@@ -213,6 +235,16 @@ struct FeedView: View {
 private struct DateRangeMenu: View {
     @Binding var selection: DateRange
 
+    /// Short label rendered inside the active chip ("Posted · 7d"). The
+    /// long form lives in ``DateRange.label`` and shows only inside the
+    /// picker menu — keeping the chip compact at every iPhone width.
+    private static let shortLabel: [DateRange: String] = [
+        .any: "",
+        .h24: "24h",
+        .d7: "7d",
+        .d30: "30d",
+    ]
+
     var body: some View {
         Menu {
             ForEach(DateRange.allCases) { range in
@@ -228,13 +260,12 @@ private struct DateRangeMenu: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "calendar")
-                Text("Posted: \(selection.label)")
-                    .font(.footnote)
-            }
-            .foregroundStyle(.secondary)
+            FilterChipLabel(
+                label: "Posted",
+                valueText: selection == .any ? nil : Self.shortLabel[selection]
+            )
         }
+        .accessibilityLabel("Posted within: \(selection.label)")
     }
 }
 
@@ -258,13 +289,12 @@ private struct RemoteFilterMenu: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: selection == .remote ? "house" : "globe.americas")
-                Text(selection.label)
-                    .font(.footnote)
-            }
-            .foregroundStyle(.secondary)
+            FilterChipLabel(
+                label: "Remote",
+                valueText: selection == .all ? nil : "On"
+            )
         }
+        .accessibilityLabel("Remote filter: \(selection.label)")
     }
 }
 
@@ -288,13 +318,16 @@ private struct StateFilterMenu: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "map")
-                Text("State: \(selection.label)")
-                    .font(.footnote)
-            }
-            .foregroundStyle(.secondary)
+            FilterChipLabel(
+                label: "State",
+                // Use the 2-letter postal code (`State · CA`) on the
+                // chip rather than the full state name — keeps the
+                // active chip compact even when the picker shows
+                // "California" inside the menu.
+                valueText: selection == .all ? nil : selection.rawValue
+            )
         }
+        .accessibilityLabel("State: \(selection.label)")
     }
 }
 
@@ -302,6 +335,17 @@ private struct StateFilterMenu: View {
 
 private struct TierFilterMenu: View {
     @Binding var selection: TierFilter
+
+    /// Short tier labels for chip display. "MAANG+" and "Startups" are
+    /// already short; the numbered tiers compress to T1/T2/T3.
+    private static let shortLabel: [TierFilter: String] = [
+        .all: "",
+        .maang: "MAANG+",
+        .tier1: "T1",
+        .tier2: "T2",
+        .tier3: "T3",
+        .startups: "Startups",
+    ]
 
     var body: some View {
         Menu {
@@ -318,13 +362,12 @@ private struct TierFilterMenu: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "rosette")
-                Text(selection.label)
-                    .font(.footnote)
-            }
-            .foregroundStyle(.secondary)
+            FilterChipLabel(
+                label: "Tier",
+                valueText: selection == .all ? nil : Self.shortLabel[selection]
+            )
         }
+        .accessibilityLabel("Tier: \(selection.label)")
     }
 }
 
@@ -351,15 +394,12 @@ private struct SortOrderMenu: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: selection == .oldest
-                      ? "arrow.up.arrow.down"
-                      : "arrow.up.arrow.down")
-                Text(selection.label)
-                    .font(.footnote)
-            }
-            .foregroundStyle(.secondary)
+            FilterChipLabel(
+                label: "Sort",
+                valueText: selection == .newest ? nil : "Oldest"
+            )
         }
+        .accessibilityLabel("Sort: \(selection.label)")
     }
 }
 
@@ -437,8 +477,10 @@ private struct PaginatorRow: View {
     }
 }
 
-/// Rounded-rect page number tile. Current page is filled with the
-/// accent color; other pages are bordered neutrals.
+/// Page-number tile. Current page renders as a solid `Color.primary`
+/// fill (matching the active filter chip), other pages get a neutral
+/// outlined capsule. Monospaced digits keep numbers edge-aligned so
+/// the row width doesn't jitter as the user pages.
 private struct PageNumberButton: View {
     let page: Int
     let current: Bool
@@ -449,19 +491,30 @@ private struct PageNumberButton: View {
         Button(action: current ? {} : onTap) {
             Text("\(page)")
                 .font(.subheadline)
+                .monospacedDigit()
                 .fontWeight(current ? .semibold : .regular)
-                .frame(minWidth: 32, minHeight: 30)
+                .frame(minWidth: 36, minHeight: 30)
                 .padding(.horizontal, 6)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(current ? Color.accentColor : Color.clear)
+                    Capsule()
+                        .fill(
+                            current
+                                ? AnyShapeStyle(Color.primary)
+                                : AnyShapeStyle(Color.gray.opacity(0.08))
+                        )
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(current ? Color.clear : Color.gray.opacity(0.3), lineWidth: 1)
+                    Capsule()
+                        .strokeBorder(
+                            current ? Color.clear : Color.gray.opacity(0.3),
+                            lineWidth: 1
+                        )
                 )
-                .foregroundStyle(current ? Color.white : Color.primary)
+                .foregroundStyle(
+                    current ? AnyShapeStyle(.background) : AnyShapeStyle(Color.primary)
+                )
                 .opacity(disabled && !current ? 0.5 : 1.0)
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .disabled(current || disabled)
@@ -482,10 +535,18 @@ private struct PaginatorArrow: View {
                 .frame(minHeight: 30)
                 .padding(.horizontal, 10)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.gray.opacity(disabled ? 0.15 : 0.3), lineWidth: 1)
+                    Capsule()
+                        .fill(Color.gray.opacity(0.08))
+                )
+                .overlay(
+                    Capsule()
+                        .strokeBorder(
+                            Color.gray.opacity(disabled ? 0.15 : 0.3),
+                            lineWidth: 1
+                        )
                 )
                 .foregroundStyle(disabled ? Color.secondary.opacity(0.5) : Color.primary)
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .disabled(disabled)
@@ -501,18 +562,29 @@ private struct JobRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
                 Text(job.title)
-                    .font(.body)
+                    .font(.body.weight(.medium))
                     .lineLimit(2)
                 Spacer(minLength: 8)
                 Text(displayAge(for: job))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    // Tabular numerals so the right-aligned timestamp
+                    // column doesn't shimmy as relative ages tick
+                    // ("1m ago" → "12m ago" stays edge-aligned).
+                    .monospacedDigit()
             }
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Text(job.company)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
+                    .font(.subheadline.weight(.medium))
                 if !job.location.isEmpty {
+                    // Bullet separator between company and location,
+                    // matching the web revamp's `Company · Location`
+                    // pattern. Subtle gray so company + location read
+                    // as two pieces of metadata, not three.
+                    Text("·")
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
                     Text(job.location)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
