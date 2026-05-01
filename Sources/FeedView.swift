@@ -133,7 +133,7 @@ struct FeedView: View {
                     RemoteFilterMenu(selection: $filters.remote)
                     StateFilterMenu(selection: $filters.state)
                     TierFilterMenu(selection: $filters.tier)
-                    SortOrderMenu(selection: $filters.sort)
+                    SortOrderToggle(selection: $filters.sort)
                     // "Clear filters" is decoupled from the search
                     // field's own clear (the native `.searchable` x).
                     // Resets only the date/remote/state/tier/sort dimensions
@@ -371,35 +371,42 @@ private struct TierFilterMenu: View {
     }
 }
 
-// MARK: - Sort order menu
+// MARK: - Sort order toggle
 
-/// Sort dropdown — Newest first (default) / Oldest first. Mirrors
-/// the web's `SortFilter`. Picking any value explicitly disables the
-/// landing-page diversification shuffle in `FeedViewModel`.
-private struct SortOrderMenu: View {
+/// Sort-direction toggle — `.newest` (default) ↔ `.oldest`. Mirrors
+/// the web's `SortFilter` toggle button: a compact two-chevron icon
+/// where the chevron matching the current direction is fully opaque
+/// and the other dims to 40%, matching GitHub / Linear / Notion.
+///
+/// Was a `Menu`-style chip pre-2026-04-29; with only two options the
+/// dropdown was a degenerate one-extra-tap interaction. The toggle
+/// conveys both states + the action in one tap and fits a tighter
+/// row on phone widths. Picking either direction explicitly disables
+/// the landing-page diversification shuffle in `FeedViewModel`.
+private struct SortOrderToggle: View {
     @Binding var selection: SortOrder
 
     var body: some View {
-        Menu {
-            ForEach(SortOrder.allCases) { s in
-                Button {
-                    selection = s
-                } label: {
-                    HStack {
-                        Text(s.label)
-                        if selection == s {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
+        Button {
+            selection = selection == .newest ? .oldest : .newest
         } label: {
-            FilterChipLabel(
-                label: "Sort",
-                valueText: selection == .newest ? nil : "Oldest"
-            )
+            VStack(spacing: 0) {
+                Image(systemName: "chevron.up")
+                    .opacity(selection == .oldest ? 1 : 0.4)
+                Image(systemName: "chevron.down")
+                    .opacity(selection == .newest ? 1 : 0.4)
+            }
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .frame(width: 32, height: 32)
+            .contentShape(Circle())
         }
-        .accessibilityLabel("Sort: \(selection.label)")
+        .buttonStyle(.plain)
+        .accessibilityLabel(
+            selection == .newest
+                ? "Sort: Newest first. Tap to switch to oldest first."
+                : "Sort: Oldest first. Tap to switch to newest first."
+        )
     }
 }
 
