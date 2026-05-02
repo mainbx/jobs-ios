@@ -347,13 +347,14 @@ private struct TierFilterMenu: View {
     @Binding var selection: TierFilter
 
     /// Short tier labels for chip display. "MAANG+" and "Startups" are
-    /// already short; the numbered tiers compress to T1/T2/T3.
+    /// already short; the numbered tiers compress to T1/T2/T3/T4.
     private static let shortLabel: [TierFilter: String] = [
         .all: "",
         .maang: "MAANG+",
         .tier1: "T1",
         .tier2: "T2",
         .tier3: "T3",
+        .tier4: "T4",
         .startups: "Startups",
     ]
 

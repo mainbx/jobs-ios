@@ -140,6 +140,7 @@ enum TierFilter: String, CaseIterable, Identifiable {
     case tier1 = "t1"
     case tier2 = "t2"
     case tier3 = "t3"
+    case tier4 = "t4"
     case startups = "startups"
 
     var id: String { rawValue }
@@ -151,6 +152,7 @@ enum TierFilter: String, CaseIterable, Identifiable {
         case .tier1: return "Tier 1"
         case .tier2: return "Tier 2"
         case .tier3: return "Tier 3"
+        case .tier4: return "Tier 4"
         case .startups: return "Startups"
         }
     }
@@ -164,6 +166,7 @@ enum TierFilter: String, CaseIterable, Identifiable {
         case .tier1: return "Tier 1"
         case .tier2: return "Tier 2"
         case .tier3: return "Tier 3"
+        case .tier4: return "Tier 4"
         case .startups: return "Startups"
         }
     }
