@@ -130,7 +130,7 @@ plus a numbered paginator at the bottom:
 - **Filter chips** — Posted / Remote / State / Tier. Each is a
   pill-shaped `Menu` whose label flips to a solid-fill active style
   when the user narrows it (e.g. `Posted · 7d`); same idiom as the
-  web frontend's [`FilterChip.tsx`](https://github.com/mainbx/jobs-web/blob/main/src/components/FilterChip.tsx).
+  web frontend's [`FilterChip.tsx`](https://github.com/axm0/jobs-web/blob/main/src/components/FilterChip.tsx).
   Native `Menu` keeps the iOS picker UX (wheel picker for 56-entry
   State, native checkmarks, free Dynamic Type + VoiceOver). Each
   picker is backed by an enum in `Sources/Filters.swift`.
